@@ -227,7 +227,7 @@ fun ChangePasswordScreen(vm: ChatViewModel) {
     var newPass2 by remember { mutableStateOf("") }
 
     AuthCard {
-        AuthHeader("首次登录必须修改初始随机密码")
+        AuthHeader("首次登录必须修改初始密码")
         OutlinedTextField(
             value = old,
             onValueChange = { old = it },

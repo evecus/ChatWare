@@ -1,3 +1,4 @@
+use crate::config::RuntimeSettings;
 use crate::error::{ApiError, ApiResult};
 use crate::models::{Message, TokenRecord};
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
@@ -6,13 +7,16 @@ use serde::Serialize;
 use std::collections::VecDeque;
 use std::path::Path;
 
-/// 所有表统一使用 &str 键 + JSON 字节值，避免引入额外索引机制。
+/// 业务表统一使用 &str 键 + JSON 字节值，避免引入额外索引机制。
 pub const USERS: TableDefinition<&str, &[u8]> = TableDefinition::new("users");
 pub const TOKENS: TableDefinition<&str, &[u8]> = TableDefinition::new("tokens");
 pub const INVITES: TableDefinition<&str, &[u8]> = TableDefinition::new("invites");
 pub const FILES: TableDefinition<&str, &[u8]> = TableDefinition::new("files");
 /// 键格式：{20 位毫秒时间戳}:{uuid}，字典序即时间序
 pub const MESSAGES: TableDefinition<&str, &[u8]> = TableDefinition::new("messages");
+/// 运行期配置：固定 key + 纯 UTF-8 文本值（"true" / "256" / 原文），不经过 JSON 序列化。
+/// 值类型与业务表一致，仅编码方式不同。
+pub const SETTINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("settings");
 
 /// 大于任何合法消息键的上界，用于「拉取最新一页」
 const MAX_KEY: &str = "\u{10ffff}";
@@ -30,6 +34,46 @@ pub fn init_tables(db: &Database) -> ApiResult<()> {
         let _ = txn.open_table(INVITES).map_err(ApiError::internal)?;
         let _ = txn.open_table(FILES).map_err(ApiError::internal)?;
         let _ = txn.open_table(MESSAGES).map_err(ApiError::internal)?;
+        let _ = txn.open_table(SETTINGS).map_err(ApiError::internal)?;
+    }
+    txn.commit().map_err(ApiError::internal)
+}
+
+/// 读取运行期配置：把 settings 表的 (key, value) 交给 RuntimeSettings 解码。
+/// 非法 UTF-8、未知 key、非法值都会报错（fail-fast），不静默忽略。
+pub fn load_settings(db: &Database) -> ApiResult<RuntimeSettings> {
+    let txn = db.begin_read().map_err(ApiError::internal)?;
+    let table = txn.open_table(SETTINGS).map_err(ApiError::internal)?;
+    let mut pairs = Vec::new();
+    for entry in table.iter().map_err(ApiError::internal)? {
+        let (key, value) = entry.map_err(ApiError::internal)?;
+        let text = std::str::from_utf8(value.value())
+            .map_err(|e| ApiError::internal(format!("settings 表值不是 UTF-8: {e}")))?;
+        pairs.push((key.value().to_string(), text.to_string()));
+    }
+    RuntimeSettings::from_pairs(&pairs).map_err(ApiError::internal)
+}
+
+/// 整体替换运行期配置：同一个写事务内清空旧值再写入，保证不会出现半套配置。
+pub fn save_settings(db: &Database, settings: &RuntimeSettings) -> ApiResult<()> {
+    let pairs = settings.to_pairs();
+    let txn = db.begin_write().map_err(ApiError::internal)?;
+    {
+        let mut table = txn.open_table(SETTINGS).map_err(ApiError::internal)?;
+        let keys: Vec<String> = table
+            .iter()
+            .map_err(ApiError::internal)?
+            .map(|entry| entry.map(|(key, _)| key.value().to_string()))
+            .collect::<Result<_, _>>()
+            .map_err(ApiError::internal)?;
+        for key in &keys {
+            table.remove(key.as_str()).map_err(ApiError::internal)?;
+        }
+        for (key, value) in &pairs {
+            table
+                .insert(*key, value.as_bytes())
+                .map_err(ApiError::internal)?;
+        }
     }
     txn.commit().map_err(ApiError::internal)
 }

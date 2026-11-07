@@ -19,7 +19,7 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
       <div class="field"><label>密码</label><input class="input" id="loginPass" type="password" autocomplete="current-password" required></div>
       <button class="btn btn-primary btn-block" type="submit">登录</button>
     </form>
-    <p class="hint">初始密码在服务端启动日志与 data/admin.txt 中</p>
+    <p class="hint">初始密码只在服务端启动日志中打印一次；也可用 ./chatware passwd -d 数据目录 --password 新密码 自行设定</p>
     <p class="hint"><a href="/user">前往 /user 聊天面板</a></p>
   </div>
 </div>
@@ -27,10 +27,10 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
 <div id="changeView" class="auth-wrap hidden">
   <div class="auth-card">
     <div class="brand"><div class="brand-mark">C</div><h1>修改初始密码</h1></div>
-    <p class="brand-sub">首次登录必须修改初始随机密码</p>
+    <p class="brand-sub">首次登录必须修改初始密码</p>
     <div id="changeErr" class="err hidden"></div>
     <form id="changeForm">
-      <div class="field"><label>原密码（初始随机密码）</label><input class="input" id="chgOld" type="password" required></div>
+      <div class="field"><label>原密码（启动日志中的初始密码）</label><input class="input" id="chgOld" type="password" required></div>
       <div class="field"><label>新密码（至少 8 位）</label><input class="input" id="chgNew" type="password" required></div>
       <div class="field"><label>确认新密码</label><input class="input" id="chgNew2" type="password" required></div>
       <button class="btn btn-primary btn-block" type="submit">保存并进入</button>
@@ -116,7 +116,7 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
         <div class="field" style="max-width:420px"><label>对外地址（反向代理后的域名，供客户端连接页使用）</label><input class="input" id="cfgUrl" placeholder="https://chat.example.com"></div>
         <div class="field" style="max-width:260px"><label>单条消息长度上限（字符）</label><input class="input" id="cfgMsg" type="number" min="1" value="4000"></div>
         <button type="button" id="cfgSave" class="btn btn-primary">保存设置</button>
-        <p class="hint" style="text-align:left">修改立即生效，并写入 data/settings.json（重启后保留）。对外地址留空时，客户端连接页回退为 http://监听地址。</p>
+        <p class="hint" style="text-align:left">修改立即生效，并写入数据库（重启后保留）。对外地址留空时，客户端连接页回退为 http://监听地址。</p>
       </div>
       <div class="card">
         <h3>只读信息（由启动参数决定，需重启生效）</h3>

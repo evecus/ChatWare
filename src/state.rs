@@ -1,4 +1,5 @@
-use crate::config::{save_runtime_settings, Config, RuntimeSettings};
+use crate::config::Config;
+use crate::db;
 use crate::error::{ApiError, ApiResult};
 use crate::models::ConfigUpdateReq;
 use redb::Database;
@@ -12,28 +13,29 @@ pub struct AppState {
     pub config: Arc<RwLock<Config>>,
     /// 单一公共大厅的广播通道
     pub hub: broadcast::Sender<String>,
-    pub data_dir: Arc<PathBuf>,
     pub files_dir: Arc<PathBuf>,
     pub started_at: i64,
 }
 
 impl AppState {
     pub fn new(db: Database, mut config: Config) -> Self {
-        let data_dir = config.data_dir.clone();
+        let settings = db::load_settings(&db).unwrap_or_else(|e| {
+            eprintln!("[chatware] 运行期配置加载失败: {}", e.message());
+            std::process::exit(1);
+        });
         config
-            .apply_runtime_overrides(&data_dir)
+            .apply_runtime_overrides(&settings)
             .unwrap_or_else(|e| {
                 eprintln!("[chatware] 运行期配置加载失败: {e}");
                 std::process::exit(1);
             });
-        let files_dir = data_dir.join("files");
+        let files_dir = config.data_dir.join("files");
         std::fs::create_dir_all(&files_dir).expect("无法创建文件存储目录");
         let (hub, _) = broadcast::channel(256);
         Self {
             db: Arc::new(db),
             config: Arc::new(RwLock::new(config)),
             hub,
-            data_dir: Arc::new(data_dir),
             files_dir: Arc::new(files_dir),
             started_at: crate::auth::now_ms(),
         }
@@ -65,14 +67,7 @@ impl AppState {
         current
             .normalize_and_validate()
             .map_err(ApiError::bad_request)?;
-        let settings = RuntimeSettings {
-            allow_registration: Some(current.allow_registration),
-            max_file_size_mb: Some(current.max_file_size_mb),
-            max_message_length: Some(current.max_message_length),
-            server_name: Some(current.server_name.clone()),
-            public_url: Some(current.public_url.clone()),
-        };
-        save_runtime_settings(&self.data_dir, &settings).map_err(ApiError::internal)?;
+        db::save_settings(self.db.as_ref(), &current.runtime_settings())?;
         *self.config.write().expect("配置读写锁已失效") = current.clone();
         Ok(current)
     }

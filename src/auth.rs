@@ -12,7 +12,6 @@ use axum::http::header::AUTHORIZATION;
 use axum::http::request::Parts;
 use rand::rngs::OsRng as TokenOsRng;
 use rand::{Rng, RngCore};
-use std::path::Path;
 
 /// token 有效期 30 天
 const TOKEN_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
@@ -151,8 +150,9 @@ impl FromRequestParts<AppState> for AdminUser {
     }
 }
 
-/// 首次启动创建管理员：随机密码打印到日志并写入 data/admin.txt，且强制首次登录改密。
-pub fn ensure_admin(db: &redb::Database, data_dir: &Path) -> ApiResult<()> {
+/// 首次启动创建管理员：随机密码只打印到日志，不落任何明文文件，且强制首次登录改密。
+/// 若事先执行过 `passwd` 子命令，管理员已存在，这里直接跳过。
+pub fn ensure_admin(db: &redb::Database) -> ApiResult<()> {
     let users: Vec<UserRecord> = db::all_json(db, db::USERS)?;
     if users.iter().any(UserRecord::is_admin) {
         return Ok(());
@@ -168,23 +168,39 @@ pub fn ensure_admin(db: &redb::Database, data_dir: &Path) -> ApiResult<()> {
     };
     db::put_json(db, db::USERS, "admin", &record)?;
 
-    let path = data_dir.join("admin.txt");
-    let content = format!(
-        "Chatware 初始管理员\n用户名: admin\n密码: {password}\n首次登录 /admin 后必须修改密码。\n"
-    );
-    std::fs::write(&path, &content).map_err(ApiError::internal)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
-
     tracing::warn!("=====================================================");
     tracing::warn!("  Chatware 初始管理员已创建");
     tracing::warn!("  用户名: admin");
     tracing::warn!("  密码  : {password}");
     tracing::warn!("  首次登录 /admin 后必须修改密码");
-    tracing::warn!("  同时已写入 {}", path.display());
+    tracing::warn!("  （该密码只在此日志出现一次，可用 passwd 子命令自行设定）");
     tracing::warn!("=====================================================");
     Ok(())
+}
+
+/// 离线设置或重置管理员密码（passwd 子命令调用）。
+/// 管理员不存在时创建它；随后启动服务 ensure_admin 会跳过随机密码。
+/// 改密后清除强制改密标记并吊销该账号全部 token，让旧会话立即失效。
+pub fn set_admin_password(db: &redb::Database, password: &str) -> ApiResult<String> {
+    validate_password(password)?;
+    let hash = hash_password(password)?;
+    let users: Vec<UserRecord> = db::all_json(db, db::USERS)?;
+    let mut admin = users
+        .into_iter()
+        .find(|u| u.is_admin())
+        .unwrap_or(UserRecord {
+            username: "admin".to_string(),
+            password_hash: String::new(),
+            role: "admin".to_string(),
+            disabled: false,
+            must_change_password: false,
+            created_at: now_ms(),
+        });
+    let username = admin.username.clone();
+    admin.password_hash = hash;
+    admin.disabled = false;
+    admin.must_change_password = false;
+    db::put_json(db, db::USERS, &username, &admin)?;
+    db::revoke_user_tokens(db, &username)?;
+    Ok(username)
 }

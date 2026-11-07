@@ -11,7 +11,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::routing::{delete, get, post};
 use axum::Router;
 use clap::Parser;
-use config::{Cli, Config};
+use config::{Cli, Command, Config};
 use state::AppState;
 
 /// 传输层硬上限，与运行期可配的 max_file_size_mb 解耦：
@@ -92,21 +92,14 @@ async fn main() {
         std::process::exit(1);
     });
 
-    let data_dir = config.data_dir.clone();
-    std::fs::create_dir_all(&data_dir).unwrap_or_else(|e| {
-        eprintln!("[chatware] 无法创建数据目录 {}: {e}", data_dir.display());
-        std::process::exit(1);
-    });
-    let db_path = data_dir.join("chatware.redb");
-    let database = db::open_db(&db_path).unwrap_or_else(|e| {
-        eprintln!("[chatware] 打开数据库失败: {}", e.message());
-        std::process::exit(1);
-    });
-    db::init_tables(&database).unwrap_or_else(|e| {
-        eprintln!("[chatware] 初始化数据表失败: {}", e.message());
-        std::process::exit(1);
-    });
-    auth::ensure_admin(&database, &data_dir).unwrap_or_else(|e| {
+    // passwd 是离线管理命令：改完密码立即退出，不启动服务、不监听端口。
+    if let Some(Command::Passwd { password }) = &cli.command {
+        run_passwd(&config, password);
+        return;
+    }
+
+    let database = open_database(&config);
+    auth::ensure_admin(&database).unwrap_or_else(|e| {
         eprintln!("[chatware] 初始化管理员失败: {}", e.message());
         std::process::exit(1);
     });
@@ -133,4 +126,36 @@ async fn main() {
             eprintln!("[chatware] 服务运行错误: {e}");
             std::process::exit(1);
         });
+}
+
+/// 创建数据目录、打开（或新建）数据库并初始化全部表。服务启动与 passwd 子命令共用。
+fn open_database(config: &Config) -> redb::Database {
+    let data_dir = &config.data_dir;
+    std::fs::create_dir_all(data_dir).unwrap_or_else(|e| {
+        eprintln!("[chatware] 无法创建数据目录 {}: {e}", data_dir.display());
+        std::process::exit(1);
+    });
+    let db_path = data_dir.join("chatware.redb");
+    let database = db::open_db(&db_path).unwrap_or_else(|e| {
+        eprintln!("[chatware] 打开数据库失败: {}", e.message());
+        eprintln!("  若服务正在运行，请先停止服务：redb 不允许两个进程同时打开同一数据库");
+        std::process::exit(1);
+    });
+    db::init_tables(&database).unwrap_or_else(|e| {
+        eprintln!("[chatware] 初始化数据表失败: {}", e.message());
+        std::process::exit(1);
+    });
+    database
+}
+
+/// 离线设置 / 重置管理员密码。密码通过 --password 传入，不在终端回显、不落任何文件。
+fn run_passwd(config: &Config, password: &str) {
+    let database = open_database(config);
+    match auth::set_admin_password(&database, password) {
+        Ok(username) => println!("管理员 {username} 的密码已更新，旧登录会话已全部失效。"),
+        Err(e) => {
+            eprintln!("[chatware] 设置密码失败: {}", e.message());
+            std::process::exit(1);
+        }
+    }
 }
