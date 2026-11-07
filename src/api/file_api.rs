@@ -138,6 +138,6 @@ pub async fn list(
     _user: AuthUser,
 ) -> ApiResult<Json<Vec<FileMeta>>> {
     let mut files: Vec<FileMeta> = db::all_json(state.db.as_ref(), db::FILES)?;
-    files.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+    files.sort_by_key(|a| std::cmp::Reverse(a.created_at));
     Ok(Json(files))
 }
