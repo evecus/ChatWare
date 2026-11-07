@@ -120,7 +120,7 @@ fun AuthScreen(vm: ChatViewModel) {
                 .padding(4.dp)
         ) {
             Button(
-                onClick = { vm.setAuthTab(0) },
+                onClick = { vm.authTab = 0 },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(9.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -130,7 +130,7 @@ fun AuthScreen(vm: ChatViewModel) {
                 elevation = null
             ) { Text("登录") }
             Button(
-                onClick = { vm.setAuthTab(1) },
+                onClick = { vm.authTab = 1 },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(9.dp),
                 colors = ButtonDefaults.buttonColors(

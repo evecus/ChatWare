@@ -30,7 +30,6 @@ class ChatViewModel(private val prefs: Prefs) : ViewModel() {
 
     /** 登录 / 注册切换；注册成功后自动切回登录 */
     var authTab by mutableStateOf(0)
-        private set
 
     var messages by mutableStateOf(emptyList<ChatMessage>())
         private set
@@ -56,10 +55,6 @@ class ChatViewModel(private val prefs: Prefs) : ViewModel() {
 
     val serverUrl: String
         get() = prefs.baseUrl
-
-    fun setAuthTab(tab: Int) {
-        authTab = tab
-    }
 
     fun showToast(text: String?) {
         toast = text
