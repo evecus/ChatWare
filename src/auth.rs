@@ -13,7 +13,7 @@ use axum::http::request::Parts;
 use rand::rngs::OsRng as TokenOsRng;
 use rand::{Rng, RngCore};
 
-/// token 有效期 30 天
+/// token 有效期 30 天（用户 token 与管理员 token 共用）
 const TOKEN_TTL_MS: i64 = 30 * 24 * 60 * 60 * 1000;
 
 pub fn now_ms() -> i64 {
@@ -43,7 +43,7 @@ pub fn random_token() -> String {
     hex::encode(buf)
 }
 
-/// 去掉易混淆字符的可读随机串，用于邀请码与初始管理员密码。
+/// 去掉易混淆字符的可读随机串，用于邀请码与初始管理密码。
 pub fn random_code() -> String {
     const ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
     let mut rng = rand::thread_rng();
@@ -85,6 +85,7 @@ pub fn new_token_record(username: &str) -> TokenRecord {
     }
 }
 
+/// 普通用户鉴权：只认 TOKENS -> USERS，管理员会话不在这两张表里，天然无法访问聊天接口。
 pub fn user_by_token(state: &AppState, token: &str) -> ApiResult<UserRecord> {
     if token.is_empty() {
         return Err(ApiError::unauthorized("缺少 token"));
@@ -112,7 +113,7 @@ fn bearer_token(parts: &Parts) -> &str {
         .trim()
 }
 
-/// 普通用户鉴权：所有登录后才可访问的 API 都用这个提取器。
+/// 普通用户提取器：所有聊天 / 文件 / 用户类 API 都用它。
 pub struct AuthUser(pub UserRecord);
 
 #[async_trait]
@@ -128,79 +129,87 @@ impl FromRequestParts<AppState> for AuthUser {
     }
 }
 
-/// 管理员鉴权：初始密码未修改之前，除改密接口外一律拒绝。
-pub struct AdminUser(pub UserRecord);
+/// 管理员提取器：只认 ADMIN_TOKENS 表，不查 USERS 表。
+/// 管理员是服务器级身份，没有用户名、不是聊天用户，用户 token 也进不了管理接口。
+pub struct AdminAuth;
 
 #[async_trait]
-impl FromRequestParts<AppState> for AdminUser {
+impl FromRequestParts<AppState> for AdminAuth {
     type Rejection = ApiError;
 
     async fn from_request_parts(
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let user = AuthUser::from_request_parts(parts, state).await?.0;
-        if !user.is_admin() {
-            return Err(ApiError::forbidden("需要管理员权限"));
+        let token = bearer_token(parts);
+        if token.is_empty() {
+            return Err(ApiError::unauthorized("缺少 token"));
         }
-        if user.must_change_password {
-            return Err(ApiError::forbidden("请先修改初始管理员密码"));
+        let expires = db::get_text(state.db.as_ref(), db::ADMIN_TOKENS, token)?
+            .ok_or_else(|| ApiError::unauthorized("登录已失效，请重新登录"))?;
+        let expires_at: i64 = expires
+            .parse()
+            .map_err(|_| ApiError::unauthorized("登录状态异常，请重新登录"))?;
+        if expires_at <= now_ms() {
+            return Err(ApiError::unauthorized("登录已过期，请重新登录"));
         }
-        Ok(Self(user))
+        Ok(Self)
     }
 }
 
-/// 首次启动创建管理员：随机密码只打印到日志，不落任何明文文件，且强制首次登录改密。
-/// 若事先执行过 `passwd` 子命令，管理员已存在，这里直接跳过。
+/// 首次启动生成初始管理密码：随机密码只打印到日志，哈希写入 ADMIN 表，不占用任何用户名。
+/// 若事先执行过 `passwd`（ADMIN 表已有哈希），这里直接跳过。
 pub fn ensure_admin(db: &redb::Database) -> ApiResult<()> {
-    let users: Vec<UserRecord> = db::all_json(db, db::USERS)?;
-    if users.iter().any(UserRecord::is_admin) {
+    if db::get_text(db, db::ADMIN, db::ADMIN_PASSWORD_KEY)?.is_some() {
         return Ok(());
     }
     let password = random_code();
-    let record = UserRecord {
-        username: "admin".to_string(),
-        password_hash: hash_password(&password)?,
-        role: "admin".to_string(),
-        disabled: false,
-        must_change_password: true,
-        created_at: now_ms(),
-    };
-    db::put_json(db, db::USERS, "admin", &record)?;
+    db::put_text(
+        db,
+        db::ADMIN,
+        db::ADMIN_PASSWORD_KEY,
+        &hash_password(&password)?,
+    )?;
 
     tracing::warn!("=====================================================");
-    tracing::warn!("  Chatware 初始管理员已创建");
-    tracing::warn!("  用户名: admin");
+    tracing::warn!("  Chatware 初始管理密码已生成");
     tracing::warn!("  密码  : {password}");
-    tracing::warn!("  首次登录 /admin 后必须修改密码");
-    tracing::warn!("  （该密码只在此日志出现一次，可用 passwd 子命令自行设定）");
+    tracing::warn!("  在 /admin 输入此密码即可登录（无需用户名）");
+    tracing::warn!(
+        "  可用 passwd 子命令自行设定： ./chatware passwd -d <数据目录> --password <新密码>"
+    );
+    tracing::warn!("  （该密码只在此日志出现一次）");
     tracing::warn!("=====================================================");
     Ok(())
 }
 
-/// 离线设置或重置管理员密码（passwd 子命令调用）。
-/// 管理员不存在时创建它；随后启动服务 ensure_admin 会跳过随机密码。
-/// 改密后清除强制改密标记并吊销该账号全部 token，让旧会话立即失效。
-pub fn set_admin_password(db: &redb::Database, password: &str) -> ApiResult<String> {
+/// 离线设置 / 重置管理密码（passwd 子命令调用）：写哈希 + 吊销全部管理员会话。
+pub fn set_admin_password(db: &redb::Database, password: &str) -> ApiResult<()> {
     validate_password(password)?;
-    let hash = hash_password(password)?;
-    let users: Vec<UserRecord> = db::all_json(db, db::USERS)?;
-    let mut admin = users
-        .into_iter()
-        .find(|u| u.is_admin())
-        .unwrap_or(UserRecord {
-            username: "admin".to_string(),
-            password_hash: String::new(),
-            role: "admin".to_string(),
-            disabled: false,
-            must_change_password: false,
-            created_at: now_ms(),
-        });
-    let username = admin.username.clone();
-    admin.password_hash = hash;
-    admin.disabled = false;
-    admin.must_change_password = false;
-    db::put_json(db, db::USERS, &username, &admin)?;
-    db::revoke_user_tokens(db, &username)?;
-    Ok(username)
+    db::put_text(
+        db,
+        db::ADMIN,
+        db::ADMIN_PASSWORD_KEY,
+        &hash_password(password)?,
+    )?;
+    db::clear_table(db, db::ADMIN_TOKENS)?;
+    Ok(())
+}
+
+/// 管理面板登录：只校验密码，签发管理员会话 token。
+pub fn admin_login(state: &AppState, password: &str) -> ApiResult<String> {
+    let hash = db::get_text(state.db.as_ref(), db::ADMIN, db::ADMIN_PASSWORD_KEY)?
+        .ok_or_else(|| ApiError::internal("管理密码尚未初始化"))?;
+    if !verify_password(password, &hash) {
+        return Err(ApiError::unauthorized("密码错误"));
+    }
+    let token = random_token();
+    let expires_at = now_ms().saturating_add(TOKEN_TTL_MS);
+    db::put_text(
+        state.db.as_ref(),
+        db::ADMIN_TOKENS,
+        &token,
+        &expires_at.to_string(),
+    )?;
+    Ok(token)
 }

@@ -30,7 +30,7 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, Clone)]
 pub enum Command {
-    /// 设置或重置管理员密码（离线操作数据库，需先停止服务）
+    /// 设置或重置 /admin 登录用的管理密码（离线操作数据库，需先停止服务）
     Passwd {
         /// 新密码，8~128 个字符
         #[arg(long)]

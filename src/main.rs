@@ -33,7 +33,6 @@ fn router(state: AppState) -> Router {
         .route("/api/login", post(api::auth_api::login))
         .route("/api/logout", post(api::auth_api::logout))
         .route("/api/me", get(api::auth_api::me))
-        .route("/api/change-password", post(api::auth_api::change_password))
         .route("/api/users", get(api::auth_api::list_users))
         // 聊天
         .route("/api/messages", get(api::chat_api::history))
@@ -42,7 +41,10 @@ fn router(state: AppState) -> Router {
         .route("/api/files", post(api::file_api::upload))
         .route("/api/files", get(api::file_api::list))
         .route("/api/files/:id", get(api::file_api::download))
-        // 管理接口
+        // 管理接口（管理员是服务器级身份，仅凭密码登录，与用户账号体系隔离）
+        .route("/api/admin/login", post(api::admin_api::login))
+        .route("/api/admin/logout", post(api::admin_api::logout))
+        .route("/api/admin/me", get(api::admin_api::me))
         .route("/api/admin/summary", get(api::admin_api::summary))
         .route(
             "/api/admin/invites",
@@ -100,7 +102,7 @@ async fn main() {
 
     let database = open_database(&config);
     auth::ensure_admin(&database).unwrap_or_else(|e| {
-        eprintln!("[chatware] 初始化管理员失败: {}", e.message());
+        eprintln!("[chatware] 初始化管理密码失败: {}", e.message());
         std::process::exit(1);
     });
 
@@ -117,7 +119,8 @@ async fn main() {
         "Chatware v{} 已启动: http://{bind}",
         env!("CARGO_PKG_VERSION")
     );
-    tracing::info!("管理面板 /admin · 用户面板 /user");
+    tracing::info!("管理面板 /admin（凭管理密码登录）· 用户面板 /user");
+    tracing::info!("根路径 / 为空响应，客户端请直接把对外地址作为服务端地址");
     tracing::info!("本程序只监听 HTTP，TLS 域名证书请由反向代理提供");
 
     axum::serve(listener, router(state))
@@ -148,11 +151,11 @@ fn open_database(config: &Config) -> redb::Database {
     database
 }
 
-/// 离线设置 / 重置管理员密码。密码通过 --password 传入，不在终端回显、不落任何文件。
+/// 离线设置 / 重置管理密码。密码通过 --password 传入，不在终端回显、不落任何文件。
 fn run_passwd(config: &Config, password: &str) {
     let database = open_database(config);
     match auth::set_admin_password(&database, password) {
-        Ok(username) => println!("管理员 {username} 的密码已更新，旧登录会话已全部失效。"),
+        Ok(()) => println!("管理密码已更新，旧登录会话已全部失效。"),
         Err(e) => {
             eprintln!("[chatware] 设置密码失败: {}", e.message());
             std::process::exit(1);

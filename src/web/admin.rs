@@ -1,4 +1,5 @@
 /// /admin 管理面板：HTML、样式引用与全部交互逻辑都由本 .rs 文件生成。
+/// 管理员是服务器级身份：登录只需管理密码（由 passwd 子命令设定），没有用户名。
 pub const PAGE: &str = r##"<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -12,30 +13,14 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
 <div id="loginView" class="auth-wrap">
   <div class="auth-card">
     <div class="brand"><div class="brand-mark">C</div><h1>Chatware 管理</h1></div>
-    <p class="brand-sub">服务端管理面板</p>
+    <p class="brand-sub">服务器管理面板 · 凭管理密码登录</p>
     <div id="loginErr" class="err hidden"></div>
     <form id="loginForm">
-      <div class="field"><label>管理员用户名</label><input class="input" id="loginUser" value="admin" autocomplete="username" required></div>
-      <div class="field"><label>密码</label><input class="input" id="loginPass" type="password" autocomplete="current-password" required></div>
+      <div class="field"><label>管理密码</label><input class="input" id="loginPass" type="password" autocomplete="current-password" required></div>
       <button class="btn btn-primary btn-block" type="submit">登录</button>
     </form>
-    <p class="hint">初始密码只在服务端启动日志中打印一次；也可用 ./chatware passwd -d 数据目录 --password 新密码 自行设定</p>
+    <p class="hint">初始管理密码只在服务端启动日志中打印一次；可用 ./chatware passwd -d 数据目录 --password 新密码 自行设定</p>
     <p class="hint"><a href="/user">前往 /user 聊天面板</a></p>
-  </div>
-</div>
-
-<div id="changeView" class="auth-wrap hidden">
-  <div class="auth-card">
-    <div class="brand"><div class="brand-mark">C</div><h1>修改初始密码</h1></div>
-    <p class="brand-sub">首次登录必须修改初始密码</p>
-    <div id="changeErr" class="err hidden"></div>
-    <form id="changeForm">
-      <div class="field"><label>原密码（启动日志中的初始密码）</label><input class="input" id="chgOld" type="password" required></div>
-      <div class="field"><label>新密码（至少 8 位）</label><input class="input" id="chgNew" type="password" required></div>
-      <div class="field"><label>确认新密码</label><input class="input" id="chgNew2" type="password" required></div>
-      <button class="btn btn-primary btn-block" type="submit">保存并进入</button>
-    </form>
-    <p class="hint"><button type="button" id="chgLogout" class="btn btn-ghost btn-sm">退出登录</button></p>
   </div>
 </div>
 
@@ -45,13 +30,13 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
     <div class="title">Chatware 管理面板</div>
     <div class="spacer"></div>
     <a href="/user" class="btn btn-ghost btn-sm">/user</a>
-    <span id="adminName" class="tag"></span>
+    <span class="tag">服务器管理员</span>
     <button type="button" id="logoutBtn" class="btn btn-ghost btn-sm">退出</button>
   </div>
 
   <div class="wrap">
     <h1 class="page-title">概览</h1>
-    <p class="page-sub">管理账号、注册邀请码与服务端运行参数</p>
+    <p class="page-sub">管理注册账号、注册邀请码与服务端运行参数</p>
     <div class="navtabs">
       <button type="button" data-tab="overview" class="active">概览</button>
       <button type="button" data-tab="invites">邀请码</button>
@@ -101,7 +86,7 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
       <div class="card">
         <h3>注册账号</h3>
         <div class="table-scroll"><table>
-          <thead><tr><th>用户名</th><th>角色</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
+          <thead><tr><th>用户名</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead>
           <tbody id="userBody"></tbody>
         </table></div>
       </div>
@@ -154,7 +139,7 @@ function toast(msg){
 }
 function showErr(sel, msg){ const e = $(sel); e.textContent = msg; e.classList.remove('hidden'); }
 function clearErr(sel){ $(sel).classList.add('hidden'); }
-function showView(v){ ['login','change','admin'].forEach(n => $('#' + n + 'View').classList.toggle('hidden', n !== v)); }
+function showView(v){ ['login','admin'].forEach(n => $('#' + n + 'View').classList.toggle('hidden', n !== v)); }
 function esc(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -225,7 +210,6 @@ async function loadUsers(){
     const list = await api('/api/admin/users');
     $('#userBody').innerHTML = list.map(u =>
       '<tr><td><b>' + esc(u.username) + '</b></td>' +
-      '<td>' + (u.role === 'admin' ? '<span class="tag">管理员</span>' : '<span class="tag gray">用户</span>') + '</td>' +
       '<td>' + (u.disabled ? '<span class="tag red">已禁用</span>' : '<span class="tag green">正常</span>') + '</td>' +
       '<td>' + fmtDate(u.created_at) + '</td>' +
       '<td><button type="button" class="btn btn-ghost btn-sm" data-toggle="' + esc(u.username) + '" data-disabled="' + (u.disabled ? '1' : '0') + '">' + (u.disabled ? '启用' : '禁用') + '</button> ' +
@@ -264,13 +248,13 @@ function switchTab(tab){
 }
 
 async function enterAdmin(){
-  const me = await api('/api/me');
-  $('#adminName').textContent = me.username;
+  await api('/api/admin/me');
   showView('admin');
   switchTab('overview');
 }
 
-function logout(){
+async function logout(){
+  try{ if(S.token) await api('/api/admin/logout', { method: 'POST' }); }catch(e){ /* 本地登出照常进行 */ }
   S.token = '';
   localStorage.removeItem('cw_admin_token');
   showView('login');
@@ -280,29 +264,14 @@ function bind(){
   $('#loginForm').addEventListener('submit', async e => {
     e.preventDefault(); clearErr('#loginErr');
     try{
-      const d = await api('/api/login', { method: 'POST', body: {
-        username: $('#loginUser').value.trim(), password: $('#loginPass').value
-      }});
-      if(!d.is_admin){ showErr('#loginErr', '该账号不是管理员'); return; }
+      const d = await api('/api/admin/login', { method: 'POST', body: { password: $('#loginPass').value }});
       S.token = d.token;
       localStorage.setItem('cw_admin_token', d.token);
-      if(d.must_change_password) showView('change');
-      else await enterAdmin();
+      $('#loginPass').value = '';
+      await enterAdmin();
     }catch(err){ showErr('#loginErr', err.message); }
   });
 
-  $('#changeForm').addEventListener('submit', async e => {
-    e.preventDefault(); clearErr('#changeErr');
-    if($('#chgNew').value !== $('#chgNew2').value){ showErr('#changeErr', '两次输入的新密码不一致'); return; }
-    try{
-      await api('/api/change-password', { method: 'POST', body: {
-        old_password: $('#chgOld').value, new_password: $('#chgNew').value
-      }});
-      toast('密码已修改');
-      await enterAdmin();
-    }catch(err){ showErr('#changeErr', err.message); }
-  });
-  $('#chgLogout').addEventListener('click', logout);
   $('#logoutBtn').addEventListener('click', logout);
 
   document.querySelectorAll('.navtabs button').forEach(b => b.addEventListener('click', () => switchTab(b.dataset.tab)));

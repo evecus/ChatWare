@@ -17,6 +17,13 @@ pub const MESSAGES: TableDefinition<&str, &[u8]> = TableDefinition::new("message
 /// 运行期配置：固定 key + 纯 UTF-8 文本值（"true" / "256" / 原文），不经过 JSON 序列化。
 /// 值类型与业务表一致，仅编码方式不同。
 pub const SETTINGS: TableDefinition<&str, &[u8]> = TableDefinition::new("settings");
+/// 服务器管理员：固定 key "password_hash" + argon2 哈希纯文本。
+/// 管理员不属于用户体系，绝不写入 USERS 表，因此 "admin" 只是普通用户名。
+pub const ADMIN: TableDefinition<&str, &[u8]> = TableDefinition::new("admin");
+/// 管理员会话：key = token，value = 过期毫秒时间戳纯文本。与用户 TOKENS 表完全隔离。
+pub const ADMIN_TOKENS: TableDefinition<&str, &[u8]> = TableDefinition::new("admin_tokens");
+
+pub const ADMIN_PASSWORD_KEY: &str = "password_hash";
 
 /// 大于任何合法消息键的上界，用于「拉取最新一页」
 const MAX_KEY: &str = "\u{10ffff}";
@@ -35,6 +42,8 @@ pub fn init_tables(db: &Database) -> ApiResult<()> {
         let _ = txn.open_table(FILES).map_err(ApiError::internal)?;
         let _ = txn.open_table(MESSAGES).map_err(ApiError::internal)?;
         let _ = txn.open_table(SETTINGS).map_err(ApiError::internal)?;
+        let _ = txn.open_table(ADMIN).map_err(ApiError::internal)?;
+        let _ = txn.open_table(ADMIN_TOKENS).map_err(ApiError::internal)?;
     }
     txn.commit().map_err(ApiError::internal)
 }
@@ -114,6 +123,57 @@ pub fn remove_key(db: &Database, def: TableDefinition<&str, &[u8]>, key: &str) -
     {
         let mut table = txn.open_table(def).map_err(ApiError::internal)?;
         table.remove(key).map_err(ApiError::internal)?;
+    }
+    txn.commit().map_err(ApiError::internal)
+}
+
+/// 读取纯 UTF-8 文本值（管理员密码哈希 / 管理员 token 过期时间都用它，不经过 JSON）。
+pub fn get_text(
+    db: &Database,
+    def: TableDefinition<&str, &[u8]>,
+    key: &str,
+) -> ApiResult<Option<String>> {
+    let txn = db.begin_read().map_err(ApiError::internal)?;
+    let table = txn.open_table(def).map_err(ApiError::internal)?;
+    let Some(guard) = table.get(key).map_err(ApiError::internal)? else {
+        return Ok(None);
+    };
+    let text = std::str::from_utf8(guard.value())
+        .map_err(|e| ApiError::internal(format!("表值不是 UTF-8: {e}")))?;
+    Ok(Some(text.to_string()))
+}
+
+/// 写入纯 UTF-8 文本值。
+pub fn put_text(
+    db: &Database,
+    def: TableDefinition<&str, &[u8]>,
+    key: &str,
+    value: &str,
+) -> ApiResult<()> {
+    let txn = db.begin_write().map_err(ApiError::internal)?;
+    {
+        let mut table = txn.open_table(def).map_err(ApiError::internal)?;
+        table
+            .insert(key, value.as_bytes())
+            .map_err(ApiError::internal)?;
+    }
+    txn.commit().map_err(ApiError::internal)
+}
+
+/// 清空整张表：改密时一次性吊销全部管理员会话。
+pub fn clear_table(db: &Database, def: TableDefinition<&str, &[u8]>) -> ApiResult<()> {
+    let txn = db.begin_write().map_err(ApiError::internal)?;
+    {
+        let mut table = txn.open_table(def).map_err(ApiError::internal)?;
+        let keys: Vec<String> = table
+            .iter()
+            .map_err(ApiError::internal)?
+            .map(|entry| entry.map(|(key, _)| key.value().to_string()))
+            .collect::<Result<_, _>>()
+            .map_err(ApiError::internal)?;
+        for key in &keys {
+            table.remove(key.as_str()).map_err(ApiError::internal)?;
+        }
     }
     txn.commit().map_err(ApiError::internal)
 }

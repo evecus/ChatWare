@@ -51,7 +51,5 @@ data class ChatMessage(
 
 data class LoginResult(
     val token: String,
-    val username: String,
-    val isAdmin: Boolean,
-    val mustChangePassword: Boolean
+    val username: String
 )

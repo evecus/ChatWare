@@ -1,13 +1,48 @@
-use crate::auth::{now_ms, random_code, AdminUser};
+use crate::auth::{admin_login, now_ms, random_code, AdminAuth};
 use crate::db;
 use crate::error::{ApiError, ApiResult};
-use crate::models::{ConfigUpdateReq, CreateInviteReq, InviteRecord, UserRecord, UserView};
+use crate::models::{
+    AdminLoginReq, ConfigUpdateReq, CreateInviteReq, InviteRecord, UserRecord, UserView,
+};
 use crate::state::AppState;
 use axum::extract::{Path, State};
+use axum::http::HeaderMap;
 use axum::Json;
 use serde_json::{json, Value};
 
-pub async fn summary(State(state): State<AppState>, _admin: AdminUser) -> ApiResult<Json<Value>> {
+/// 管理面板登录：只提交密码，通过后签发管理员会话 token。
+pub async fn login(
+    State(state): State<AppState>,
+    Json(req): Json<AdminLoginReq>,
+) -> ApiResult<Json<Value>> {
+    let token = admin_login(&state, &req.password)?;
+    Ok(Json(json!({ "token": token })))
+}
+
+/// 登出即删除该管理员会话 token，服务端立即失效。
+pub async fn logout(
+    State(state): State<AppState>,
+    _admin: AdminAuth,
+    headers: HeaderMap,
+) -> ApiResult<Json<Value>> {
+    let token = headers
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .unwrap_or("")
+        .trim();
+    if !token.is_empty() {
+        db::remove_key(state.db.as_ref(), db::ADMIN_TOKENS, token)?;
+    }
+    Ok(Json(json!({ "ok": true })))
+}
+
+/// 会话有效性校验：前端带 token 探测，有效返回 200。
+pub async fn me(_admin: AdminAuth) -> Json<Value> {
+    Json(json!({ "ok": true }))
+}
+
+pub async fn summary(State(state): State<AppState>, _admin: AdminAuth) -> ApiResult<Json<Value>> {
     let users = db::count(state.db.as_ref(), db::USERS)?;
     let messages = db::count(state.db.as_ref(), db::MESSAGES)?;
     let files: Vec<crate::models::FileMeta> = db::all_json(state.db.as_ref(), db::FILES)?;
@@ -25,7 +60,7 @@ pub async fn summary(State(state): State<AppState>, _admin: AdminUser) -> ApiRes
 
 pub async fn list_invites(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    _admin: AdminAuth,
 ) -> ApiResult<Json<Vec<InviteRecord>>> {
     let mut invites: Vec<InviteRecord> = db::all_json(state.db.as_ref(), db::INVITES)?;
     invites.sort_by_key(|a| std::cmp::Reverse(a.created_at));
@@ -34,7 +69,7 @@ pub async fn list_invites(
 
 pub async fn create_invite(
     State(state): State<AppState>,
-    admin: AdminUser,
+    _admin: AdminAuth,
     Json(req): Json<CreateInviteReq>,
 ) -> ApiResult<Json<InviteRecord>> {
     let max_uses = req.max_uses.unwrap_or(1).clamp(1, 1000);
@@ -48,7 +83,8 @@ pub async fn create_invite(
     let now = now_ms();
     let record = InviteRecord {
         code,
-        created_by: admin.0.username,
+        // 管理员是服务器级身份、没有用户名；这里用固定标识表示"服务器管理员"。
+        created_by: "server-admin".to_string(),
         max_uses,
         used: 0,
         expires_at: if hours > 0 {
@@ -66,7 +102,7 @@ pub async fn create_invite(
 
 pub async fn delete_invite(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    _admin: AdminAuth,
     Path(code): Path<String>,
 ) -> ApiResult<Json<Value>> {
     db::remove_key(state.db.as_ref(), db::INVITES, &code)?;
@@ -75,14 +111,13 @@ pub async fn delete_invite(
 
 pub async fn list_users(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    _admin: AdminAuth,
 ) -> ApiResult<Json<Vec<UserView>>> {
     let users: Vec<UserRecord> = db::all_json(state.db.as_ref(), db::USERS)?;
     let mut views: Vec<UserView> = users
         .into_iter()
         .map(|u| UserView {
             username: u.username,
-            role: u.role,
             disabled: u.disabled,
             created_at: u.created_at,
         })
@@ -103,19 +138,16 @@ fn set_disabled(state: &AppState, username: &str, disabled: bool) -> ApiResult<(
 
 pub async fn disable_user(
     State(state): State<AppState>,
-    admin: AdminUser,
+    _admin: AdminAuth,
     Path(username): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    if username == admin.0.username {
-        return Err(ApiError::bad_request("不能禁用当前管理员账号"));
-    }
     set_disabled(&state, &username, true)?;
     Ok(Json(json!({ "ok": true })))
 }
 
 pub async fn enable_user(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    _admin: AdminAuth,
     Path(username): Path<String>,
 ) -> ApiResult<Json<Value>> {
     set_disabled(&state, &username, false)?;
@@ -124,12 +156,9 @@ pub async fn enable_user(
 
 pub async fn delete_user(
     State(state): State<AppState>,
-    admin: AdminUser,
+    _admin: AdminAuth,
     Path(username): Path<String>,
 ) -> ApiResult<Json<Value>> {
-    if username == admin.0.username {
-        return Err(ApiError::bad_request("不能删除当前管理员账号"));
-    }
     if db::get_json::<UserRecord>(state.db.as_ref(), db::USERS, &username)?.is_none() {
         return Err(ApiError::not_found("用户不存在"));
     }
@@ -141,7 +170,7 @@ pub async fn delete_user(
 
 pub async fn get_config(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    _admin: AdminAuth,
 ) -> ApiResult<Json<Value>> {
     let config = state.config_snapshot();
     Ok(Json(json!({
@@ -157,7 +186,7 @@ pub async fn get_config(
 
 pub async fn update_config(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    _admin: AdminAuth,
     Json(req): Json<ConfigUpdateReq>,
 ) -> ApiResult<Json<Value>> {
     let config = state.apply_config_update(req)?;
@@ -174,7 +203,7 @@ pub async fn update_config(
 /// 反向代理提供真实域名证书，客户端只需对外地址，无需任何证书配置。
 pub async fn connection_info(
     State(state): State<AppState>,
-    _admin: AdminUser,
+    _admin: AdminAuth,
 ) -> ApiResult<Json<Value>> {
     let config = state.config_snapshot();
     let public_url = if config.public_url.is_empty() {

@@ -4,9 +4,7 @@ use crate::auth::{
 };
 use crate::db;
 use crate::error::{ApiError, ApiResult};
-use crate::models::{
-    ChangePasswordReq, InviteRecord, LoginReq, LoginResp, RegisterReq, UserRecord, UserView,
-};
+use crate::models::{InviteRecord, LoginReq, LoginResp, RegisterReq, UserRecord, UserView};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -36,9 +34,7 @@ pub async fn register(
     let record = UserRecord {
         username: req.username.clone(),
         password_hash,
-        role: "user".to_string(),
         disabled: false,
-        must_change_password: false,
         created_at: now_ms(),
     };
     let user_bytes = serde_json::to_vec(&record).map_err(ApiError::internal)?;
@@ -87,8 +83,6 @@ pub async fn login(
     if user.disabled {
         return Err(ApiError::forbidden("账号已被管理员禁用"));
     }
-    let is_admin = user.is_admin();
-    let must_change_password = user.must_change_password;
     let token = random_token();
     db::put_json(
         state.db.as_ref(),
@@ -99,8 +93,6 @@ pub async fn login(
     Ok(Json(LoginResp {
         token,
         username: user.username,
-        is_admin,
-        must_change_password,
     }))
 }
 
@@ -125,26 +117,9 @@ pub async fn logout(
 pub async fn me(user: AuthUser) -> ApiResult<Json<UserView>> {
     Ok(Json(UserView {
         username: user.0.username,
-        role: user.0.role,
         disabled: user.0.disabled,
         created_at: user.0.created_at,
     }))
-}
-
-pub async fn change_password(
-    State(state): State<AppState>,
-    user: AuthUser,
-    Json(req): Json<ChangePasswordReq>,
-) -> ApiResult<Json<Value>> {
-    validate_password(&req.new_password)?;
-    let mut user = user.0;
-    if !verify_password(&req.old_password, &user.password_hash) {
-        return Err(ApiError::bad_request("原密码不正确"));
-    }
-    user.password_hash = hash_password(&req.new_password)?;
-    user.must_change_password = false;
-    db::put_json(state.db.as_ref(), db::USERS, &user.username, &user)?;
-    Ok(Json(json!({ "ok": true })))
 }
 
 /// 公开信息：页面标题与是否开放注册。
@@ -167,7 +142,6 @@ pub async fn list_users(
         .into_iter()
         .map(|u| UserView {
             username: u.username,
-            role: u.role,
             disabled: u.disabled,
             created_at: u.created_at,
         })

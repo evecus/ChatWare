@@ -21,7 +21,6 @@ fun AppRoot(prefs: Prefs) {
 
     when (vm.screen) {
         Screen.Auth -> AuthScreen(vm)
-        Screen.ChangePassword -> ChangePasswordScreen(vm)
         Screen.Chat -> ChatScreen(vm)
     }
 }

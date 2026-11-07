@@ -21,7 +21,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -217,60 +216,5 @@ fun AuthScreen(vm: ChatViewModel) {
             textAlign = TextAlign.Center,
             modifier = Modifier.fillMaxWidth()
         )
-    }
-}
-
-@Composable
-fun ChangePasswordScreen(vm: ChatViewModel) {
-    var old by remember { mutableStateOf("") }
-    var newPass by remember { mutableStateOf("") }
-    var newPass2 by remember { mutableStateOf("") }
-
-    AuthCard {
-        AuthHeader("首次登录必须修改初始密码")
-        OutlinedTextField(
-            value = old,
-            onValueChange = { old = it },
-            label = { Text("原密码") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = newPass,
-            onValueChange = { newPass = it },
-            label = { Text("新密码（至少 8 位）") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
-        )
-        Spacer(Modifier.height(12.dp))
-        OutlinedTextField(
-            value = newPass2,
-            onValueChange = { newPass2 = it },
-            label = { Text("确认新密码") },
-            singleLine = true,
-            visualTransformation = PasswordVisualTransformation(),
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp)
-        )
-        Spacer(Modifier.height(18.dp))
-        Button(
-            onClick = {
-                if (newPass != newPass2) vm.showToast("两次输入的新密码不一致")
-                else vm.changePassword(old, newPass)
-            },
-            enabled = !vm.busy,
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = ButtonDefaults.buttonColors(containerColor = Brand)
-        ) { Text("保存并进入", fontSize = 15.sp) }
-        Spacer(Modifier.height(8.dp))
-        TextButton(onClick = { vm.logout() }, modifier = Modifier.fillMaxWidth()) {
-            Text("退出登录", fontSize = 12.sp, color = Color.Gray)
-        }
     }
 }

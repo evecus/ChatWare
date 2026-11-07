@@ -4,17 +4,8 @@ use serde::{Deserialize, Serialize};
 pub struct UserRecord {
     pub username: String,
     pub password_hash: String,
-    /// "admin" | "user"
-    pub role: String,
     pub disabled: bool,
-    pub must_change_password: bool,
     pub created_at: i64,
-}
-
-impl UserRecord {
-    pub fn is_admin(&self) -> bool {
-        self.role == "admin"
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -73,10 +64,10 @@ pub struct LoginReq {
     pub password: String,
 }
 
+/// 管理面板登录：只需要密码。管理员是服务器级身份，不属于用户体系、没有用户名。
 #[derive(Debug, Deserialize)]
-pub struct ChangePasswordReq {
-    pub old_password: String,
-    pub new_password: String,
+pub struct AdminLoginReq {
+    pub password: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,14 +122,11 @@ pub struct ConfigUpdateReq {
 pub struct LoginResp {
     pub token: String,
     pub username: String,
-    pub is_admin: bool,
-    pub must_change_password: bool,
 }
 
 #[derive(Debug, Serialize)]
 pub struct UserView {
     pub username: String,
-    pub role: String,
     pub disabled: bool,
     pub created_at: i64,
 }

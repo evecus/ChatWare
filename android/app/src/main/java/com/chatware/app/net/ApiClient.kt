@@ -75,9 +75,7 @@ class ChatApi(private val prefs: Prefs) {
         val o = JSONObject(call("/api/login", "POST", body))
         LoginResult(
             token = o.optString("token"),
-            username = o.optString("username"),
-            isAdmin = o.optBoolean("is_admin"),
-            mustChangePassword = o.optBoolean("must_change_password")
+            username = o.optString("username")
         )
     }
 
@@ -94,13 +92,6 @@ class ChatApi(private val prefs: Prefs) {
 
     suspend fun me(): String = withContext(Dispatchers.IO) {
         JSONObject(call("/api/me")).optString("username")
-    }
-
-    suspend fun changePassword(old: String, new: String): Unit = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("old_password", old).put("new_password", new).toString()
-            .toRequestBody(JSON_TYPE)
-        call("/api/change-password", "POST", body)
-        Unit
     }
 
     suspend fun logout(): Unit = withContext(Dispatchers.IO) {

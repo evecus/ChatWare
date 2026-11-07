@@ -40,21 +40,6 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
   </div>
 </div>
 
-<div id="changeView" class="auth-wrap hidden">
-  <div class="auth-card">
-    <div class="brand"><div class="brand-mark">C</div><h1>修改初始密码</h1></div>
-    <p class="brand-sub">首次登录必须修改密码后才能继续使用</p>
-    <div id="changeErr" class="err hidden"></div>
-    <form id="changeForm">
-      <div class="field"><label>原密码</label><input class="input" id="chgOld" type="password" required></div>
-      <div class="field"><label>新密码（至少 8 位）</label><input class="input" id="chgNew" type="password" required></div>
-      <div class="field"><label>确认新密码</label><input class="input" id="chgNew2" type="password" required></div>
-      <button class="btn btn-primary btn-block" type="submit">保存并进入</button>
-    </form>
-    <p class="hint"><button type="button" id="chgLogout" class="btn btn-ghost btn-sm">退出登录</button></p>
-  </div>
-</div>
-
 <div id="appView" class="chat-app hidden">
   <div id="sheetMask" class="sheet-mask hidden"></div>
   <aside id="sidebar" class="sidebar">
@@ -121,7 +106,7 @@ function toast(msg){
 }
 function showErr(sel, msg){ const e = $(sel); e.textContent = msg; e.classList.remove('hidden'); }
 function clearErr(sel){ $(sel).classList.add('hidden'); }
-function showView(v){ ['auth','change','app'].forEach(n => $('#' + n + 'View').classList.toggle('hidden', n !== v)); }
+function showView(v){ ['auth','app'].forEach(n => $('#' + n + 'View').classList.toggle('hidden', n !== v)); }
 function esc(s){
   return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
@@ -343,8 +328,7 @@ function bind(){
       }});
       S.token = d.token;
       localStorage.setItem('cw_token', d.token);
-      if(d.must_change_password) showView('change');
-      else await enterApp();
+      await enterApp();
     }catch(err){ showErr('#loginErr', err.message); }
   });
 
@@ -362,19 +346,6 @@ function bind(){
       $('#loginPass').value = '';
     }catch(err){ showErr('#regErr', err.message); }
   });
-
-  $('#changeForm').addEventListener('submit', async e => {
-    e.preventDefault(); clearErr('#changeErr');
-    if($('#chgNew').value !== $('#chgNew2').value){ showErr('#changeErr', '两次输入的新密码不一致'); return; }
-    try{
-      await api('/api/change-password', { method: 'POST', body: {
-        old_password: $('#chgOld').value, new_password: $('#chgNew').value
-      }});
-      toast('密码已修改');
-      await enterApp();
-    }catch(err){ showErr('#changeErr', err.message); }
-  });
-  $('#chgLogout').addEventListener('click', logout);
 
   $('#sendBtn').addEventListener('click', send);
   $('#input').addEventListener('keydown', e => {

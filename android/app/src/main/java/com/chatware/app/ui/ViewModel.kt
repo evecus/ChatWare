@@ -18,7 +18,7 @@ import org.json.JSONObject
 import java.io.File
 import java.net.URI
 
-enum class Screen { Auth, ChangePassword, Chat }
+enum class Screen { Auth, Chat }
 
 class ChatViewModel(private val prefs: Prefs) : ViewModel() {
     val api = ChatApi(prefs)
@@ -90,12 +90,8 @@ class ChatViewModel(private val prefs: Prefs) : ViewModel() {
             val result = api.login(user, pass)
             prefs.token = result.token
             prefs.username = result.username
-            if (result.mustChangePassword) {
-                screen = Screen.ChangePassword
-            } else {
-                screen = Screen.Chat
-                start()
-            }
+            screen = Screen.Chat
+            start()
         } catch (e: Exception) {
             toast = e.message
         } finally {
@@ -111,19 +107,6 @@ class ChatViewModel(private val prefs: Prefs) : ViewModel() {
             prefs.username = user
             authTab = 0
             toast = "注册成功，请登录"
-        } catch (e: Exception) {
-            toast = e.message
-        } finally {
-            busy = false
-        }
-    }
-
-    fun changePassword(old: String, new: String) = viewModelScope.launch {
-        busy = true
-        try {
-            api.changePassword(old, new)
-            screen = Screen.Chat
-            start()
         } catch (e: Exception) {
             toast = e.message
         } finally {
