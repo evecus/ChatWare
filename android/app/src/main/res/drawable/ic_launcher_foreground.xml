@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 双聊天气泡：大泡带消息点，小泡叠在右上，白色前景 + 渐变背景 -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 小气泡（右上） -->
+    <path
+        android:fillColor="#E6FFFFFF"
+        android:pathData="M62,22 C62,19 64,17 67,17 L82,17 C85,17 87,19 87,22 L87,33 C87,36 85,38 82,38 L73,38 L67,43 L69,38 L67,38 C64,38 62,36 62,33 Z" />
+
+    <!-- 大气泡 -->
+    <path
+        android:fillColor="#FFFFFFFF"
+        android:pathData="M24,40 C24,34 29,29 35,29 L63,29 C69,29 74,34 74,40 L74,57 C74,63 69,68 63,68 L44,68 L32,77 L35,68 C29,68 24,63 24,57 Z" />
+
+    <!-- 消息点 -->
+    <path
+        android:fillColor="#FF5B6CFF"
+        android:pathData="M36,48 a3.4,3.4 0 1,0 6.8,0 a3.4,3.4 0 1,0 -6.8,0" />
+    <path
+        android:fillColor="#FF5B6CFF"
+        android:pathData="M45.6,48 a3.4,3.4 0 1,0 6.8,0 a3.4,3.4 0 1,0 -6.8,0" />
+    <path
+        android:fillColor="#FF5B6CFF"
+        android:pathData="M55.2,48 a3.4,3.4 0 1,0 6.8,0 a3.4,3.4 0 1,0 -6.8,0" />
+</vector>

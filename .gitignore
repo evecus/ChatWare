@@ -1,0 +1,15 @@
+/target
+/data
+config.toml
+*.redb
+*.redb.tmp
+
+android/.gradle/
+android/build/
+android/app/build/
+android/app/release.jks
+android/local.properties
+android/.idea/
+android/captures/
+*.iml
+.DS_Store

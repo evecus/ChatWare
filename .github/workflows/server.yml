@@ -1,0 +1,74 @@
+name: build-server
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'src/**'
+      - '.github/workflows/server.yml'
+
+permissions:
+  contents: write
+
+# 与 android.yml 共用同一组，避免两个 workflow 同时写同一个 Release
+concurrency:
+  group: chatware-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: linux x64 musl
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Rust 工具链
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+          components: rustfmt, clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: musl-x64
+
+      - name: 安装 musl 工具链
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+
+      - name: 格式检查
+        run: cargo fmt --all -- --check
+
+      - name: clippy 严格检查
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: 依赖树守卫（禁止 C 加密后端破坏 musl 静态编译）
+        run: |
+          if cargo tree --locked 2>/dev/null | grep -qi 'aws-lc-rs'; then
+            echo "::error::依赖树中出现 aws-lc-rs，本程序 TLS 由反代提供，不应引入 C 加密后端"
+            exit 1
+          fi
+          echo "依赖树干净：全部为纯 Rust 依赖"
+
+      - name: 编译 release 单二进制
+        run: cargo build --release --locked --target x86_64-unknown-linux-musl
+
+      - name: 精简并打包
+        run: |
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/chatware dist/chatware
+          strip dist/chatware || true
+          cp config.example.toml dist/config.example.toml
+          cp README.md dist/README.md
+          tar -czf chatware-linux-x64-musl.tar.gz \
+            -C dist chatware config.example.toml README.md
+          ls -lh dist/chatware chatware-linux-x64-musl.tar.gz
+
+      - name: 发布到 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test
+          files: chatware-linux-x64-musl
