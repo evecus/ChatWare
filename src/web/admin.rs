@@ -112,11 +112,14 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
         <h3>运行参数</h3>
         <div class="field"><label class="switch"><input type="checkbox" id="cfgReg"> 开放注册（关闭后只能由已有账号登录）</label></div>
         <div class="field" style="max-width:260px"><label>单文件大小上限（MB）</label><input class="input" id="cfgSize" type="number" min="1" value="100"></div>
+        <div class="field" style="max-width:420px"><label>服务端名称（显示在 /user 面板标题）</label><input class="input" id="cfgName" maxlength="64" placeholder="Chatware"></div>
+        <div class="field" style="max-width:420px"><label>对外地址（反向代理后的域名，供客户端连接页使用）</label><input class="input" id="cfgUrl" placeholder="https://chat.example.com"></div>
+        <div class="field" style="max-width:260px"><label>单条消息长度上限（字符）</label><input class="input" id="cfgMsg" type="number" min="1" value="4000"></div>
         <button type="button" id="cfgSave" class="btn btn-primary">保存设置</button>
-        <p class="hint" style="text-align:left">修改立即生效，并写入 data/settings.json（重启后保留）。</p>
+        <p class="hint" style="text-align:left">修改立即生效，并写入 data/settings.json（重启后保留）。对外地址留空时，客户端连接页回退为 http://监听地址。</p>
       </div>
       <div class="card">
-        <h3>只读信息</h3>
+        <h3>只读信息（由启动参数决定，需重启生效）</h3>
         <div id="cfgReadonly" class="mono" style="line-height:2;word-break:break-all"></div>
       </div>
     </div>
@@ -241,12 +244,12 @@ async function loadConfig(){
     const d = await api('/api/admin/config');
     $('#cfgReg').checked = d.allow_registration;
     $('#cfgSize').value = d.max_file_size_mb;
+    $('#cfgName').value = d.server_name;
+    $('#cfgUrl').value = d.public_url;
+    $('#cfgMsg').value = d.max_message_length;
     $('#cfgReadonly').innerHTML =
       '监听地址：' + esc(d.bind) + '<br>' +
-      '服务端名称：' + esc(d.server_name) + '<br>' +
-      '对外地址：' + esc(d.public_url || '(未配置)') + '<br>' +
-      '数据目录：' + esc(d.data_dir) + '<br>' +
-      '单条消息长度上限：' + d.max_message_length + ' 字符';
+      '数据目录：' + esc(d.data_dir);
   }catch(e){ toast(e.message); }
 }
 
@@ -351,10 +354,17 @@ function bind(){
   });
 
   $('#cfgSave').addEventListener('click', async () => {
+    const size = Number($('#cfgSize').value);
+    const msg = Number($('#cfgMsg').value);
+    if(!Number.isInteger(size) || size < 1){ toast('文件大小上限需为不小于 1 的整数'); return; }
+    if(!Number.isInteger(msg) || msg < 1){ toast('消息长度上限需为不小于 1 的整数'); return; }
     try{
       await api('/api/admin/config', { method: 'POST', body: {
         allow_registration: $('#cfgReg').checked,
-        max_file_size_mb: Number($('#cfgSize').value) || 100
+        max_file_size_mb: size,
+        server_name: $('#cfgName').value,
+        public_url: $('#cfgUrl').value,
+        max_message_length: msg
       }});
       toast('设置已保存并生效');
       loadConfig();

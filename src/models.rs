@@ -119,6 +119,12 @@ pub struct ConfigUpdateReq {
     pub allow_registration: Option<bool>,
     #[serde(default)]
     pub max_file_size_mb: Option<u64>,
+    #[serde(default)]
+    pub max_message_length: Option<usize>,
+    #[serde(default)]
+    pub server_name: Option<String>,
+    #[serde(default)]
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]

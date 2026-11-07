@@ -165,6 +165,9 @@ pub async fn update_config(
         "ok": true,
         "allow_registration": config.allow_registration,
         "max_file_size_mb": config.max_file_size_mb,
+        "max_message_length": config.max_message_length,
+        "server_name": config.server_name,
+        "public_url": config.public_url,
     })))
 }
 
@@ -179,15 +182,16 @@ pub async fn connection_info(
     } else {
         config.public_url.clone()
     };
-    let host_port = raw
-        .split("://")
-        .nth(1)
-        .unwrap_or(raw.as_str())
-        .split('/')
-        .next()
-        .unwrap_or("HOST")
-        .to_string();
-    let host = host_port.split(':').next().unwrap_or("HOST").to_string();
+    let (scheme, rest) = raw.split_once("://").unwrap_or(("http", raw.as_str()));
+    let authority = rest.split('/').next().unwrap_or("HOST").to_string();
+    let host = authority.split(':').next().unwrap_or("HOST").to_string();
+    // openssl s_client 的 -connect 必须是 host:port；填域名时按 scheme 补默认端口。
+    let host_port = if authority.contains(':') {
+        authority
+    } else {
+        let default_port = if scheme == "https" { "443" } else { "80" };
+        format!("{host}:{default_port}")
+    };
     Ok(Json(json!({
         "public_url": raw,
         "tls": "由反向代理提供域名证书；本程序只监听 HTTP",

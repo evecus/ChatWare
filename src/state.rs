@@ -20,7 +20,12 @@ pub struct AppState {
 impl AppState {
     pub fn new(db: Database, mut config: Config) -> Self {
         let data_dir = config.data_dir.clone();
-        config.apply_runtime_overrides(&data_dir);
+        config
+            .apply_runtime_overrides(&data_dir)
+            .unwrap_or_else(|e| {
+                eprintln!("[chatware] 运行期配置加载失败: {e}");
+                std::process::exit(1);
+            });
         let files_dir = data_dir.join("files");
         std::fs::create_dir_all(&files_dir).expect("无法创建文件存储目录");
         let (hub, _) = broadcast::channel(256);
@@ -39,23 +44,33 @@ impl AppState {
     }
 
     /// fail-fast：校验不通过直接拒绝，不静默使用旧值。
+    /// 校验规则与启动加载共用 Config::validate，避免多处规则不一致。
     pub fn apply_config_update(&self, req: ConfigUpdateReq) -> ApiResult<Config> {
         let mut current = self.config_snapshot();
         if let Some(v) = req.allow_registration {
             current.allow_registration = v;
         }
         if let Some(v) = req.max_file_size_mb {
-            if v == 0 || v > crate::config::MAX_FILE_SIZE_MB {
-                return Err(ApiError::bad_request(format!(
-                    "max_file_size_mb 必须在 1~{} 之间",
-                    crate::config::MAX_FILE_SIZE_MB
-                )));
-            }
             current.max_file_size_mb = v;
         }
+        if let Some(v) = req.max_message_length {
+            current.max_message_length = v;
+        }
+        if let Some(v) = req.server_name {
+            current.server_name = v;
+        }
+        if let Some(v) = req.public_url {
+            current.public_url = v;
+        }
+        current
+            .normalize_and_validate()
+            .map_err(ApiError::bad_request)?;
         let settings = RuntimeSettings {
             allow_registration: Some(current.allow_registration),
             max_file_size_mb: Some(current.max_file_size_mb),
+            max_message_length: Some(current.max_message_length),
+            server_name: Some(current.server_name.clone()),
+            public_url: Some(current.public_url.clone()),
         };
         save_runtime_settings(&self.data_dir, &settings).map_err(ApiError::internal)?;
         *self.config.write().expect("配置读写锁已失效") = current.clone();

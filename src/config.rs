@@ -4,6 +4,12 @@ use std::path::{Path, PathBuf};
 
 /// 运行期文件大小上限的允许范围（MB），必须小于 main.rs 的 HARD_BODY_LIMIT
 pub const MAX_FILE_SIZE_MB: u64 = 1024;
+/// 单条消息长度上限的允许范围（字符）
+pub const MAX_MESSAGE_LENGTH: usize = 100_000;
+/// 面板显示名称最大长度
+const MAX_SERVER_NAME_LEN: usize = 64;
+/// 对外地址最大长度
+const MAX_PUBLIC_URL_LEN: usize = 512;
 
 /// Chatware 命令行参数。配置校验失败一律 fail-fast，不做静默降级。
 #[derive(Parser, Debug, Clone)]
@@ -13,14 +19,14 @@ pub const MAX_FILE_SIZE_MB: u64 = 1024;
     about = "自托管聊天服务端（TLS 请交给反向代理）"
 )]
 pub struct Cli {
-    /// 配置文件路径
-    #[arg(short, long, default_value = "config.toml")]
-    pub config: PathBuf,
+    /// 可选配置文件路径；不指定则完全使用内置默认值，不读取任何配置文件
+    #[arg(short, long)]
+    pub config: Option<PathBuf>,
     /// 数据目录（覆盖配置文件）
     #[arg(short, long)]
     pub data_dir: Option<PathBuf>,
     /// 监听地址（覆盖配置文件）
-    #[arg(long)]
+    #[arg(short = 'p', long)]
     pub bind: Option<String>,
 }
 
@@ -53,13 +59,16 @@ impl Default for Config {
 
 impl Config {
     pub fn load(cli: &Cli) -> Result<Self, String> {
-        let mut cfg = if cli.config.exists() {
-            let text = std::fs::read_to_string(&cli.config)
-                .map_err(|e| format!("读取 {} 失败: {e}", cli.config.display()))?;
-            toml::from_str::<Self>(&text)
-                .map_err(|e| format!("解析 {} 失败: {e}", cli.config.display()))?
-        } else {
-            Self::default()
+        let mut cfg = match &cli.config {
+            // 显式指定配置文件：不存在或解析失败一律 fail-fast，不静默降级为默认值
+            Some(path) => {
+                let text = std::fs::read_to_string(path)
+                    .map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
+                toml::from_str::<Self>(&text)
+                    .map_err(|e| format!("解析 {} 失败: {e}", path.display()))?
+            }
+            // 零配置运行：不碰任何配置文件，纯内置默认值
+            None => Self::default(),
         };
 
         if let Some(dir) = &cli.data_dir {
@@ -68,36 +77,69 @@ impl Config {
         if let Some(bind) = &cli.bind {
             cfg.bind = bind.clone();
         }
-
-        if cfg.max_file_size_mb == 0 || cfg.max_file_size_mb > MAX_FILE_SIZE_MB {
-            return Err(format!("max_file_size_mb 必须在 1~{MAX_FILE_SIZE_MB} 之间"));
-        }
-        if cfg.max_message_length == 0 {
-            return Err("max_message_length 必须大于 0".to_string());
-        }
+        cfg.normalize_and_validate()?;
         Ok(cfg)
     }
 
-    /// 管理面板修改的少量运行期配置，单独落盘，重启后仍然生效。
-    pub fn apply_runtime_overrides(&mut self, data_dir: &Path) {
-        let path = data_dir.join("settings.json");
-        if let Ok(text) = std::fs::read_to_string(&path) {
-            match serde_json::from_str::<RuntimeSettings>(&text) {
-                Ok(s) => {
-                    if let Some(v) = s.allow_registration {
-                        self.allow_registration = v;
-                    }
-                    if let Some(v) = s.max_file_size_mb {
-                        if (1..=MAX_FILE_SIZE_MB).contains(&v) {
-                            self.max_file_size_mb = v;
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[chatware] {} 解析失败，已忽略: {e}", path.display());
-                }
-            }
+    /// 所有配置的唯一校验入口：命令行、配置文件、面板修改共用，避免多处规则不一致。
+    pub fn validate(&self) -> Result<(), String> {
+        if !(1..=MAX_FILE_SIZE_MB).contains(&self.max_file_size_mb) {
+            return Err(format!("max_file_size_mb 必须在 1~{MAX_FILE_SIZE_MB} 之间"));
         }
+        if !(1..=MAX_MESSAGE_LENGTH).contains(&self.max_message_length) {
+            return Err(format!(
+                "max_message_length 必须在 1~{MAX_MESSAGE_LENGTH} 之间"
+            ));
+        }
+        if self.server_name.trim().is_empty()
+            || self.server_name.chars().count() > MAX_SERVER_NAME_LEN
+        {
+            return Err(format!(
+                "server_name 必须为 1~{MAX_SERVER_NAME_LEN} 个字符且不能全为空白"
+            ));
+        }
+        validate_public_url(&self.public_url)?;
+        Ok(())
+    }
+
+    /// 先规范化字符串再校验，保证落盘值与校验依据一致。
+    pub fn normalize_and_validate(&mut self) -> Result<(), String> {
+        self.server_name = self.server_name.trim().to_string();
+        self.public_url = self.public_url.trim().to_string();
+        self.validate()
+    }
+
+    /// 管理面板修改的运行期配置，单独落盘，重启后仍然生效。
+    /// 整体校验后再整体生效：settings.json 被手改坏时明确报错，不静默降级。
+    pub fn apply_runtime_overrides(&mut self, data_dir: &Path) -> Result<(), String> {
+        let path = data_dir.join("settings.json");
+        let text = match std::fs::read_to_string(&path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(format!("读取 {} 失败: {e}", path.display())),
+        };
+        let s: RuntimeSettings =
+            serde_json::from_str(&text).map_err(|e| format!("{} 解析失败: {e}", path.display()))?;
+        let mut next = self.clone();
+        if let Some(v) = s.allow_registration {
+            next.allow_registration = v;
+        }
+        if let Some(v) = s.max_file_size_mb {
+            next.max_file_size_mb = v;
+        }
+        if let Some(v) = s.max_message_length {
+            next.max_message_length = v;
+        }
+        if let Some(v) = s.server_name {
+            next.server_name = v;
+        }
+        if let Some(v) = s.public_url {
+            next.public_url = v;
+        }
+        next.normalize_and_validate()
+            .map_err(|e| format!("{} 含非法配置: {e}", path.display()))?;
+        *self = next;
+        Ok(())
     }
 
     pub fn max_file_size_bytes(&self) -> u64 {
@@ -105,10 +147,42 @@ impl Config {
     }
 }
 
+/// public_url 会拼进 openssl 指纹命令，因此拒绝空白、控制字符与 shell 元字符。
+/// 空串表示未设置，connection_info 回退为 http://<bind>。
+fn validate_public_url(url: &str) -> Result<(), String> {
+    if url.is_empty() {
+        return Ok(());
+    }
+    if url.chars().count() > MAX_PUBLIC_URL_LEN {
+        return Err(format!("public_url 不能超过 {MAX_PUBLIC_URL_LEN} 个字符"));
+    }
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .ok_or_else(|| "public_url 必须以 http:// 或 https:// 开头，或留空".to_string())?;
+    if rest.is_empty()
+        || rest.starts_with('/')
+        || url.chars().any(|c| {
+            c.is_whitespace()
+                || c.is_control()
+                || matches!(
+                    c,
+                    '"' | '\'' | '\\' | '<' | '>' | '`' | '$' | ';' | '|' | '&'
+                )
+        })
+    {
+        return Err("public_url 含非法字符或缺少主机名".to_string());
+    }
+    Ok(())
+}
+
 #[derive(Debug, Default, Deserialize, Serialize)]
 pub struct RuntimeSettings {
     pub allow_registration: Option<bool>,
     pub max_file_size_mb: Option<u64>,
+    pub max_message_length: Option<usize>,
+    pub server_name: Option<String>,
+    pub public_url: Option<String>,
 }
 
 pub fn save_runtime_settings(data_dir: &Path, settings: &RuntimeSettings) -> Result<(), String> {
