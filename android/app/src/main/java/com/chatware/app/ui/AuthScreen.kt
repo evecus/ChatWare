@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -32,6 +33,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -85,16 +87,31 @@ private fun AuthCard(content: @Composable () -> Unit) {
     }
 }
 
+/** 服务端地址 + 登录 / 注册合为同一页；域名证书由反向代理提供，客户端无需证书配置。 */
 @Composable
-fun LoginScreen(vm: ChatViewModel) {
-    var tab by remember { mutableStateOf(0) }
+fun AuthScreen(vm: ChatViewModel) {
+    var base by remember { mutableStateOf(vm.serverUrl.ifBlank { "https://" }) }
     var user by remember { mutableStateOf(vm.myName) }
     var pass by remember { mutableStateOf("") }
     var pass2 by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
+    val tab = vm.authTab
 
     AuthCard {
-        AuthHeader("连接 ${vm.serverUrl}")
+        AuthHeader("填写服务端地址，登录或注册")
+
+        OutlinedTextField(
+            value = base,
+            onValueChange = { base = it },
+            label = { Text("服务端地址") },
+            placeholder = { Text("https://chat.example.com") },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(12.dp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri)
+        )
+        Spacer(Modifier.height(16.dp))
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -103,7 +120,7 @@ fun LoginScreen(vm: ChatViewModel) {
                 .padding(4.dp)
         ) {
             Button(
-                onClick = { tab = 0 },
+                onClick = { vm.setAuthTab(0) },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(9.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -113,7 +130,7 @@ fun LoginScreen(vm: ChatViewModel) {
                 elevation = null
             ) { Text("登录") }
             Button(
-                onClick = { tab = 1 },
+                onClick = { vm.setAuthTab(1) },
                 modifier = Modifier.weight(1f),
                 shape = RoundedCornerShape(9.dp),
                 colors = ButtonDefaults.buttonColors(
@@ -171,11 +188,11 @@ fun LoginScreen(vm: ChatViewModel) {
         Button(
             onClick = {
                 if (tab == 0) {
-                    vm.login(user.trim(), pass)
+                    vm.login(base, user.trim(), pass)
                 } else if (pass != pass2) {
                     vm.showToast("两次输入的密码不一致")
                 } else {
-                    vm.register(user.trim(), pass, code.trim())
+                    vm.register(base, user.trim(), pass, code.trim())
                 }
             },
             enabled = !vm.busy,
@@ -185,10 +202,14 @@ fun LoginScreen(vm: ChatViewModel) {
         ) {
             Text(if (tab == 0) "登录" else "注册", fontSize = 15.sp)
         }
-        Spacer(Modifier.height(8.dp))
-        TextButton(onClick = { vm.gotoServerSettings() }, modifier = Modifier.fillMaxWidth()) {
-            Text("更改服务端地址", fontSize = 12.sp, color = Color.Gray)
-        }
+        Spacer(Modifier.height(10.dp))
+        Text(
+            "域名证书由反向代理提供，客户端无需任何证书配置",
+            fontSize = 11.sp,
+            color = Color.Gray,
+            textAlign = TextAlign.Center,
+            modifier = Modifier.fillMaxWidth()
+        )
         Text(
             "每个账号都有用户名和密码，聊天界面会显示用户名",
             fontSize = 11.sp,

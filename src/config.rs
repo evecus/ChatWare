@@ -35,7 +35,7 @@ pub struct Config {
     pub max_message_length: usize,
     pub allow_registration: bool,
     pub server_name: String,
-    /// 反代之后对外访问的地址，仅用于管理面板展示与指纹提示
+    /// 反代之后对外访问的地址，供管理面板展示与客户端连接页复制
     pub public_url: String,
 }
 
@@ -133,8 +133,8 @@ impl Config {
     }
 }
 
-/// public_url 会拼进 openssl 指纹命令，因此拒绝空白、控制字符与 shell 元字符。
-/// 空串表示未设置，connection_info 回退为 http://<bind>。
+/// public_url 用于客户端地址展示与复制，拒绝空白、控制字符与超长；空串表示未设置。
+/// 未设置时 connection_info 回退为 http://<bind>。
 fn validate_public_url(url: &str) -> Result<(), String> {
     if url.is_empty() {
         return Ok(());
@@ -148,14 +148,7 @@ fn validate_public_url(url: &str) -> Result<(), String> {
         .ok_or_else(|| "public_url 必须以 http:// 或 https:// 开头，或留空".to_string())?;
     if rest.is_empty()
         || rest.starts_with('/')
-        || url.chars().any(|c| {
-            c.is_whitespace()
-                || c.is_control()
-                || matches!(
-                    c,
-                    '"' | '\'' | '\\' | '<' | '>' | '`' | '$' | ';' | '|' | '&'
-                )
-        })
+        || url.chars().any(|c| c.is_whitespace() || c.is_control())
     {
         return Err("public_url 含非法字符或缺少主机名".to_string());
     }

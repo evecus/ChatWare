@@ -160,8 +160,8 @@ fun ChatScreen(vm: ChatViewModel) {
                         clipboard.setText(AnnotatedString(vm.serverUrl))
                         Toast.makeText(context, "已复制服务端地址", Toast.LENGTH_SHORT).show()
                     }) { Text("复制地址", fontSize = 12.sp, color = Brand) }
-                    TextButton(onClick = { vm.gotoServerSettings() }) {
-                        Text("设置", fontSize = 12.sp, color = Color.Gray)
+                    TextButton(onClick = { vm.gotoAuth() }) {
+                        Text("切换", fontSize = 12.sp, color = Color.Gray)
                     }
                     TextButton(onClick = { vm.logout() }) {
                         Text("退出", fontSize = 12.sp, color = Color.Gray)

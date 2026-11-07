@@ -11,7 +11,6 @@ import com.chatware.app.model.FileMeta
 import com.chatware.app.model.LoginResult
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okhttp3.CertificatePinner
 import okhttp3.FormBody
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
@@ -26,58 +25,25 @@ import okio.BufferedSink
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.net.URI
 import java.net.URLEncoder
-import java.security.SecureRandom
-import java.security.cert.X509Certificate
 import java.util.concurrent.TimeUnit
-import javax.net.ssl.SSLContext
-import javax.net.ssl.TrustManager
-import javax.net.ssl.X509TrustManager
 
 private val JSON_TYPE = "application/json; charset=utf-8".toMediaType()
 
 class ChatApi(private val prefs: Prefs) {
-    private var http: OkHttpClient = buildClient()
+    private val http: OkHttpClient = buildClient()
 
     val base: String
         get() = prefs.baseUrl.trim().trimEnd('/')
 
-    /** 服务器地址 / 指纹 / 跳过校验变更后重建客户端 */
-    fun reconfigure() {
-        http = buildClient()
-    }
-
-    private fun buildClient(): OkHttpClient {
-        val builder = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(90, TimeUnit.SECONDS)
-            .writeTimeout(90, TimeUnit.SECONDS)
-            .pingInterval(25, TimeUnit.SECONDS)
-            .retryOnConnectionFailure(true)
-
-        val fp = prefs.fingerprint.trim()
-        if (prefs.skipVerify) {
-            // 用户显式开启：信任任意证书，且不固定指纹
-            val trustAll = object : X509TrustManager {
-                override fun checkClientTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-                override fun checkServerTrusted(chain: Array<out X509Certificate>?, authType: String?) = Unit
-                override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
-            }
-            val ssl = SSLContext.getInstance("TLS").apply {
-                init(null, arrayOf<TrustManager>(trustAll), SecureRandom())
-            }
-            builder.sslSocketFactory(ssl.socketFactory, trustAll)
-            builder.hostnameVerifier { _, _ -> true }
-        } else if (fp.isNotBlank()) {
-            val host = runCatching { URI.create(base).host }.getOrNull().orEmpty()
-            if (host.isNotBlank()) {
-                val pin = if (fp.startsWith("sha256/")) fp else "sha256/$fp"
-                builder.certificatePinner(CertificatePinner.Builder().add(host, pin).build())
-            }
-        }
-        return builder.build()
-    }
+    /** 域名证书由反向代理提供，直接使用系统默认 CA 校验，不做任何证书定制。 */
+    private fun buildClient(): OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
+        .writeTimeout(90, TimeUnit.SECONDS)
+        .pingInterval(25, TimeUnit.SECONDS)
+        .retryOnConnectionFailure(true)
+        .build()
 
     private fun call(path: String, method: String = "GET", body: RequestBody? = null): String {
         val builder = Request.Builder().url(base + path)

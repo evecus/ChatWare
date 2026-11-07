@@ -127,14 +127,9 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
     <div class="pane hidden" id="pane-conn">
       <div class="card">
         <h3>客户端连接信息</h3>
-        <p class="hint" style="text-align:left;margin-top:0">把下面地址复制到安卓客户端的「服务端地址」中。</p>
+        <p class="hint" style="text-align:left;margin-top:0">把下面地址填到安卓客户端登录 / 注册页的「服务端地址」中。</p>
         <div class="row"><div id="connUrl" class="mono" style="flex:1;word-break:break-all"></div><button type="button" id="connCopy" class="btn btn-ghost btn-sm">复制</button></div>
-      </div>
-      <div class="card">
-        <h3>证书指纹（可选）</h3>
-        <p class="hint" style="text-align:left;margin-top:0">TLS 由反向代理提供。若使用自签证书，可在安卓客户端填入下面命令输出的指纹；使用公网可信证书时留空即可。</p>
-        <div class="code-box" id="connCmd"></div>
-        <div class="row" style="margin-top:12px"><button type="button" id="connCmdCopy" class="btn btn-ghost btn-sm">复制命令</button></div>
+        <p class="hint" style="text-align:left">域名证书由反向代理提供，客户端走系统默认 CA 校验，无需填写证书指纹，也没有跳过校验开关。</p>
       </div>
     </div>
   </div>
@@ -257,7 +252,6 @@ async function loadConn(){
   try{
     const d = await api('/api/admin/connection-info');
     $('#connUrl').textContent = d.public_url;
-    $('#connCmd').textContent = d.fingerprint_command;
   }catch(e){ toast(e.message); }
 }
 
@@ -372,7 +366,6 @@ function bind(){
   });
 
   $('#connCopy').addEventListener('click', () => copyText($('#connUrl').textContent));
-  $('#connCmdCopy').addEventListener('click', () => copyText($('#connCmd').textContent));
 }
 
 (async function init(){

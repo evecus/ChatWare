@@ -72,7 +72,6 @@ tr:last-child td{border-bottom:0}
 .switch input:checked{background:var(--brand)}
 .switch input::after{content:"";position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:50%;background:#fff;transition:.2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
 .switch input:checked::after{transform:translateX(18px)}
-.code-box{background:#0f1424;color:#c7d2fe;padding:14px 16px;border-radius:12px;font-family:ui-monospace,monospace;font-size:12px;overflow-x:auto;white-space:pre-wrap;word-break:break-all}
 
 /* ---------- 聊天（微信风格） ---------- */
 .chat-app{display:flex;height:100dvh;background:#fff;overflow:hidden}

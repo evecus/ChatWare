@@ -171,33 +171,16 @@ pub async fn update_config(
     })))
 }
 
-/// TLS 由反向代理提供，这里给出客户端「手动填指纹」所需的提示。
+/// 反向代理提供真实域名证书，客户端只需对外地址，无需任何证书配置。
 pub async fn connection_info(
     State(state): State<AppState>,
     _admin: AdminUser,
 ) -> ApiResult<Json<Value>> {
     let config = state.config_snapshot();
-    let raw = if config.public_url.is_empty() {
+    let public_url = if config.public_url.is_empty() {
         format!("http://{}", config.bind)
     } else {
-        config.public_url.clone()
+        config.public_url
     };
-    let (scheme, rest) = raw.split_once("://").unwrap_or(("http", raw.as_str()));
-    let authority = rest.split('/').next().unwrap_or("HOST").to_string();
-    let host = authority.split(':').next().unwrap_or("HOST").to_string();
-    // openssl s_client 的 -connect 必须是 host:port；填域名时按 scheme 补默认端口。
-    let host_port = if authority.contains(':') {
-        authority
-    } else {
-        let default_port = if scheme == "https" { "443" } else { "80" };
-        format!("{host}:{default_port}")
-    };
-    Ok(Json(json!({
-        "public_url": raw,
-        "tls": "由反向代理提供域名证书；本程序只监听 HTTP",
-        "fingerprint_command": format!(
-            "openssl s_client -connect {host_port} -servername {host} </dev/null 2>/dev/null | openssl x509 -pubkey -noout | openssl pkey -pubin -outform der | openssl dgst -sha256 -binary | openssl base64"
-        ),
-        "note": "在安卓客户端「证书指纹」中填入上面命令的输出；若使用公网可信证书，可保持为空。",
-    })))
+    Ok(Json(json!({ "public_url": public_url })))
 }

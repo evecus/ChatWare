@@ -20,8 +20,7 @@ fun AppRoot(prefs: Prefs) {
     }
 
     when (vm.screen) {
-        Screen.Server -> ServerScreen(prefs, vm)
-        Screen.Login -> LoginScreen(vm)
+        Screen.Auth -> AuthScreen(vm)
         Screen.ChangePassword -> ChangePasswordScreen(vm)
         Screen.Chat -> ChatScreen(vm)
     }

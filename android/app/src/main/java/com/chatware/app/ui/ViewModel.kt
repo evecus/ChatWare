@@ -18,18 +18,18 @@ import org.json.JSONObject
 import java.io.File
 import java.net.URI
 
-enum class Screen { Server, Login, ChangePassword, Chat }
+enum class Screen { Auth, ChangePassword, Chat }
 
 class ChatViewModel(private val prefs: Prefs) : ViewModel() {
     val api = ChatApi(prefs)
 
     var screen by mutableStateOf(
-        when {
-            prefs.baseUrl.isBlank() -> Screen.Server
-            prefs.token.isBlank() -> Screen.Login
-            else -> Screen.Chat
-        }
+        if (prefs.token.isBlank() || prefs.baseUrl.isBlank()) Screen.Auth else Screen.Chat
     )
+        private set
+
+    /** 登录 / 注册切换；注册成功后自动切回登录 */
+    var authTab by mutableStateOf(0)
         private set
 
     var messages by mutableStateOf(emptyList<ChatMessage>())
@@ -57,33 +57,39 @@ class ChatViewModel(private val prefs: Prefs) : ViewModel() {
     val serverUrl: String
         get() = prefs.baseUrl
 
+    fun setAuthTab(tab: Int) {
+        authTab = tab
+    }
+
     fun showToast(text: String?) {
         toast = text
     }
 
-    fun saveServer(base: String, fingerprint: String, skipVerify: Boolean) {
+    /** 校验并保存服务端地址。请求地址每次动态读 prefs，改地址后无需重建客户端。 */
+    private fun applyBase(base: String): Boolean {
         val value = base.trim().trimEnd('/')
         val host = runCatching { URI.create(value).host }.getOrNull()
         if (host.isNullOrBlank() || !(value.startsWith("http://") || value.startsWith("https://"))) {
-            toast = "请填写完整地址，例如 http://192.168.1.5:3000"
-            return
+            toast = "请填写完整地址，例如 https://chat.example.com"
+            return false
         }
         prefs.baseUrl = value
-        prefs.fingerprint = fingerprint.trim()
-        prefs.skipVerify = skipVerify
-        api.reconfigure()
-        screen = if (prefs.token.isBlank()) Screen.Login else Screen.Chat
-        if (screen == Screen.Chat) start()
+        return true
     }
 
-    fun gotoServerSettings() {
+    /** 回到登录/注册页（服务端地址也在本页），同时结束旧会话 */
+    fun gotoAuth() {
         socket?.cancel()
         socket = null
         connected = false
-        screen = Screen.Server
+        everConnected = false
+        messages = emptyList()
+        prefs.clearSession()
+        screen = Screen.Auth
     }
 
-    fun login(user: String, pass: String) = viewModelScope.launch {
+    fun login(base: String, user: String, pass: String) = viewModelScope.launch {
+        if (!applyBase(base)) return@launch
         busy = true
         try {
             val result = api.login(user, pass)
@@ -102,12 +108,13 @@ class ChatViewModel(private val prefs: Prefs) : ViewModel() {
         }
     }
 
-    fun register(user: String, pass: String, code: String) = viewModelScope.launch {
+    fun register(base: String, user: String, pass: String, code: String) = viewModelScope.launch {
+        if (!applyBase(base)) return@launch
         busy = true
         try {
             api.register(user, pass, code)
             prefs.username = user
-            screen = Screen.Login
+            authTab = 0
             toast = "注册成功，请登录"
         } catch (e: Exception) {
             toast = e.message
@@ -137,7 +144,7 @@ class ChatViewModel(private val prefs: Prefs) : ViewModel() {
         everConnected = false
         messages = emptyList()
         prefs.clearSession()
-        screen = Screen.Login
+        screen = Screen.Auth
     }
 
     private fun start() = viewModelScope.launch {
@@ -151,7 +158,7 @@ class ChatViewModel(private val prefs: Prefs) : ViewModel() {
             connected = false
             messages = emptyList()
             prefs.clearSession()
-            screen = Screen.Login
+            screen = Screen.Auth
         }
     }
 
