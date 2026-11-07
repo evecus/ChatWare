@@ -20,7 +20,7 @@
 
 ## 快速开始
 
-**零配置运行**：不需要任何配置文件，全部用内置默认值，其余参数在管理面板里改。
+**零配置运行**：程序不读取任何配置文件，全部用内置默认值，其余参数在管理面板里改。
 
 ```bash
 ./chatware -p 127.0.0.1:3000 -d /opt/chatware/data
@@ -30,9 +30,8 @@
 |---|---|
 | `-p` / `--bind <地址>` | 监听地址，默认 `127.0.0.1:3000` |
 | `-d` / `--data-dir <目录>` | 数据目录，默认 `./data` |
-| `-c` / `--config <文件>` | **可选**，一次性预置参数；不传则不读取任何配置文件 |
 
-不传 `-c` 时程序**不会**自动寻找 `config.toml`；显式 `-c` 但文件不存在或解析失败会 **fail-fast 直接退出**，不静默降级。
+只有这两个启动参数。`bind` 与 `data_dir` 之外的配置项一律使用内置默认值，需要调整请到 `/admin → 设置` 修改（立即生效并写入 `data/settings.json`，重启保留）。
 
 首次启动会在**日志**打印初始管理员密码，同时写入 `data/admin.txt`：
 
@@ -48,7 +47,7 @@ Chatware 初始管理员已创建
 3. 在「邀请码」页生成邀请码（可设可用次数、有效小时、备注）。
 4. 打开 `/user`，或把地址复制到安卓客户端，用邀请码注册账号后即可聊天、发文件。
 
-> `config.example.toml` 只是**可选参考**，仅当你想用文件一次性预置参数时才需要 `-c` 指定。`data/settings.json` 里由面板保存的值优先级高于配置文件与命令行。
+> `data/settings.json` 由管理面板维护，不要手改；其内容优先级高于内置默认值与命令行，含非法值时会明确报错退出（fail-fast），不会静默降级。
 
 ## TLS 与反向代理
 
@@ -100,14 +99,14 @@ location / {
 | GET | `/api/admin/summary` | 用户数、消息数、文件数 |
 | GET/POST/DELETE | `/api/admin/invites` | 邀请码管理 |
 | GET/POST/DELETE | `/api/admin/users` | 禁用 / 启用 / 删除账号 |
-| GET/POST | `/api/admin/config` | 开放注册、文件大小上限（立即生效并持久化） |
+| GET/POST | `/api/admin/config` | 5 项运行参数（注册开关、文件大小、消息长度、名称、对外地址），立即生效并持久化 |
 | GET | `/api/admin/connection-info` | 对外地址 + 指纹命令 |
 
 所有响应错误统一为 `{ "error": "..." }`；除登录、注册、`/api/info` 外都需要 `Authorization: Bearer <token>`。
 
 ## 配置项
 
-启动时由命令行 / 可选配置文件 / 内置默认值决定；带「面板可改」的项还能在 `/admin → 设置` 里热改并写入 `data/settings.json`（重启保留，优先级最高）。
+启动时由内置默认值与命令行 `-p`/`-d` 决定；带「面板可改」的项还能在 `/admin → 设置` 里热改并写入 `data/settings.json`（重启保留，优先级最高）。
 
 | 配置 | 默认值 | 面板可改 | 说明 |
 |---|---|---|---|
@@ -160,7 +159,6 @@ cd android && ./gradlew :app:assembleRelease
 ```
 chatware/
 ├── Cargo.toml / Cargo.lock
-├── config.example.toml          # 可选参考，零配置运行不需要
 ├── src/
 │   ├── main.rs                 # CLI、路由、启动
 │   ├── config.rs / db.rs / auth.rs / state.rs

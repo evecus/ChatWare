@@ -11,7 +11,7 @@ const MAX_SERVER_NAME_LEN: usize = 64;
 /// 对外地址最大长度
 const MAX_PUBLIC_URL_LEN: usize = 512;
 
-/// Chatware 命令行参数。配置校验失败一律 fail-fast，不做静默降级。
+/// Chatware 命令行参数。只暴露启动期必须的两项，其余配置一律走内置默认值或管理面板。
 #[derive(Parser, Debug, Clone)]
 #[command(
     name = "chatware",
@@ -19,19 +19,15 @@ const MAX_PUBLIC_URL_LEN: usize = 512;
     about = "自托管聊天服务端（TLS 请交给反向代理）"
 )]
 pub struct Cli {
-    /// 可选配置文件路径；不指定则完全使用内置默认值，不读取任何配置文件
-    #[arg(short, long)]
-    pub config: Option<PathBuf>,
-    /// 数据目录（覆盖配置文件）
+    /// 数据目录（覆盖内置默认值 ./data）
     #[arg(short, long)]
     pub data_dir: Option<PathBuf>,
-    /// 监听地址（覆盖配置文件）
+    /// 监听地址（覆盖内置默认值 127.0.0.1:3000）
     #[arg(short = 'p', long)]
     pub bind: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
-#[serde(default)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub bind: String,
     pub data_dir: PathBuf,
@@ -58,19 +54,9 @@ impl Default for Config {
 }
 
 impl Config {
+    /// 零配置加载：内置默认值 + 两个启动参数，统一走 validate（失败 fail-fast，不静默降级）。
     pub fn load(cli: &Cli) -> Result<Self, String> {
-        let mut cfg = match &cli.config {
-            // 显式指定配置文件：不存在或解析失败一律 fail-fast，不静默降级为默认值
-            Some(path) => {
-                let text = std::fs::read_to_string(path)
-                    .map_err(|e| format!("读取 {} 失败: {e}", path.display()))?;
-                toml::from_str::<Self>(&text)
-                    .map_err(|e| format!("解析 {} 失败: {e}", path.display()))?
-            }
-            // 零配置运行：不碰任何配置文件，纯内置默认值
-            None => Self::default(),
-        };
-
+        let mut cfg = Self::default();
         if let Some(dir) = &cli.data_dir {
             cfg.data_dir = dir.clone();
         }
@@ -81,7 +67,7 @@ impl Config {
         Ok(cfg)
     }
 
-    /// 所有配置的唯一校验入口：命令行、配置文件、面板修改共用，避免多处规则不一致。
+    /// 所有配置的唯一校验入口：启动加载、面板修改、settings.json 加载共用，避免多处规则不一致。
     pub fn validate(&self) -> Result<(), String> {
         if !(1..=MAX_FILE_SIZE_MB).contains(&self.max_file_size_mb) {
             return Err(format!("max_file_size_mb 必须在 1~{MAX_FILE_SIZE_MB} 之间"));
