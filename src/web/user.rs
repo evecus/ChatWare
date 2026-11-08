@@ -63,6 +63,7 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
         <div class="sub"><span id="statusDot" class="status-dot"></span><span id="statusText">连接中</span></div>
       </div>
       <div class="spacer"></div>
+      <button type="button" id="accountBtn" class="btn btn-ghost btn-sm">账号</button>
       <button type="button" id="copyAddr3" class="btn btn-ghost btn-sm">复制地址</button>
     </div>
 
@@ -79,6 +80,24 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
         <input id="fileInput" type="file" class="hidden">
       </div>
     </div>
+  </div>
+</div>
+
+<div id="accountMask" class="modal-mask hidden">
+  <div class="modal">
+    <h3>账号设置</h3>
+    <p class="modal-sub">修改用户名或密码后，需要用新的账号信息重新登录。</p>
+    <div id="accountErr" class="err hidden"></div>
+    <form id="accountForm">
+      <div class="field"><label>用户名（2~24 个字符）</label><input class="input" id="accUser" autocomplete="username" required></div>
+      <div class="field"><label>当前密码（验证身份）</label><input class="input" id="accCurrent" type="password" autocomplete="current-password" required></div>
+      <div class="field"><label>新密码（留空表示不修改，8~128 个字符）</label><input class="input" id="accNew" type="password" autocomplete="new-password"></div>
+      <div class="field"><label>确认新密码</label><input class="input" id="accNew2" type="password" autocomplete="new-password"></div>
+      <div class="modal-actions">
+        <button type="button" id="accCancel" class="btn btn-ghost">取消</button>
+        <button type="submit" class="btn btn-primary">保存</button>
+      </div>
+    </form>
   </div>
 </div>
 
@@ -367,6 +386,38 @@ function bind(){
     if(e.target.scrollTop < 60) loadHistory(false);
   });
   $('#logoutBtn').addEventListener('click', logout);
+
+  const closeAccount = () => $('#accountMask').classList.add('hidden');
+  $('#accountBtn').addEventListener('click', () => {
+    clearErr('#accountErr');
+    $('#accUser').value = S.me ? S.me.username : '';
+    $('#accCurrent').value = ''; $('#accNew').value = ''; $('#accNew2').value = '';
+    $('#accountMask').classList.remove('hidden');
+  });
+  $('#accCancel').addEventListener('click', closeAccount);
+  $('#accountMask').addEventListener('click', e => { if(e.target === $('#accountMask')) closeAccount(); });
+  $('#accountForm').addEventListener('submit', async e => {
+    e.preventDefault(); clearErr('#accountErr');
+    const np = $('#accNew').value;
+    if(np !== $('#accNew2').value){ showErr('#accountErr', '两次输入的新密码不一致'); return; }
+    try{
+      const d = await api('/api/account', { method: 'POST', body: {
+        current_password: $('#accCurrent').value,
+        username: $('#accUser').value.trim(),
+        new_password: np
+      }});
+      closeAccount();
+      if(d.relogin){
+        logout();
+        $('#loginUser').value = d.username;
+        $('#loginPass').value = '';
+        toast('修改成功，请用新的账号信息重新登录');
+      } else {
+        toast('账号信息未变更');
+      }
+    }catch(err){ showErr('#accountErr', err.message); }
+  });
+
   ['#copyAddr','#copyAddr2','#copyAddr3'].forEach(s => $(s).addEventListener('click', copyAddr));
 
   $('#menuBtn').addEventListener('click', () => {

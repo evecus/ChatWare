@@ -5,6 +5,7 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.OpenableColumns
 import com.chatware.app.data.Prefs
+import com.chatware.app.model.AccountResult
 import com.chatware.app.model.ApiException
 import com.chatware.app.model.ChatMessage
 import com.chatware.app.model.FileMeta
@@ -97,6 +98,25 @@ class ChatApi(private val prefs: Prefs) {
     suspend fun logout(): Unit = withContext(Dispatchers.IO) {
         runCatching { call("/api/logout", "POST") }
         Unit
+    }
+
+    /** 修改自己的用户名 / 密码；服务端在账号变更后吊销全部会话，需重新登录。 */
+    suspend fun updateAccount(
+        current: String,
+        username: String,
+        newPassword: String
+    ): AccountResult = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+            .put("current_password", current)
+            .put("username", username)
+            .put("new_password", newPassword)
+            .toString()
+            .toRequestBody(JSON_TYPE)
+        val o = JSONObject(call("/api/account", "POST", body))
+        AccountResult(
+            username = o.optString("username"),
+            relogin = o.optBoolean("relogin")
+        )
     }
 
     suspend fun messages(before: String?, limit: Int = 50): Pair<List<ChatMessage>, Boolean> =

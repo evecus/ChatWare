@@ -53,3 +53,8 @@ data class LoginResult(
     val token: String,
     val username: String
 )
+
+data class AccountResult(
+    val username: String,
+    val relogin: Boolean
+)

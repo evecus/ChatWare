@@ -1,6 +1,6 @@
 use crate::config::RuntimeSettings;
 use crate::error::{ApiError, ApiResult};
-use crate::models::{Message, TokenRecord};
+use crate::models::{FileMeta, Message, TokenRecord, UserRecord};
 use redb::{Database, ReadableTable, ReadableTableMetadata, TableDefinition};
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -160,19 +160,139 @@ pub fn put_text(
     txn.commit().map_err(ApiError::internal)
 }
 
-/// 清空整张表：改密时一次性吊销全部管理员会话。
-pub fn clear_table(db: &Database, def: TableDefinition<&str, &[u8]>) -> ApiResult<()> {
+/// 写管理密码哈希并吊销全部管理员会话：同一个写事务，
+/// 保证不会出现「密码已改但旧会话仍有效」的中间状态。
+pub fn write_admin_password(db: &Database, hash: &str) -> ApiResult<()> {
     let txn = db.begin_write().map_err(ApiError::internal)?;
     {
-        let mut table = txn.open_table(def).map_err(ApiError::internal)?;
-        let keys: Vec<String> = table
+        let mut admin = txn.open_table(ADMIN).map_err(ApiError::internal)?;
+        admin
+            .insert(ADMIN_PASSWORD_KEY, hash.as_bytes())
+            .map_err(ApiError::internal)?;
+        let mut sessions = txn.open_table(ADMIN_TOKENS).map_err(ApiError::internal)?;
+        let keys: Vec<String> = sessions
             .iter()
             .map_err(ApiError::internal)?
             .map(|entry| entry.map(|(key, _)| key.value().to_string()))
             .collect::<Result<_, _>>()
             .map_err(ApiError::internal)?;
         for key in &keys {
-            table.remove(key.as_str()).map_err(ApiError::internal)?;
+            sessions.remove(key.as_str()).map_err(ApiError::internal)?;
+        }
+    }
+    txn.commit().map_err(ApiError::internal)
+}
+
+/// 用户改用户名 / 改密码：在一个写事务里完成所有连带更新，避免半套状态。
+/// 改用户名时同步重写历史消息与文件元数据里的署名，否则前端重新登录后
+/// 历史气泡会被判成「别人的消息」。变更即吊销该用户全部会话（含其他设备）。
+pub fn update_user_account(
+    db: &Database,
+    old_username: &str,
+    new_username: &str,
+    new_hash: Option<&str>,
+) -> ApiResult<()> {
+    let renamed = old_username != new_username;
+    let mut user: UserRecord =
+        get_json(db, USERS, old_username)?.ok_or_else(|| ApiError::unauthorized("账号不存在"))?;
+    user.username = new_username.to_string();
+    if let Some(hash) = new_hash {
+        user.password_hash = hash.to_string();
+    }
+    let user_bytes = serde_json::to_vec(&user).map_err(ApiError::internal)?;
+
+    let txn = db.begin_write().map_err(ApiError::internal)?;
+    {
+        let mut users = txn.open_table(USERS).map_err(ApiError::internal)?;
+        if renamed {
+            // 占用检查必须在同一写事务内，避免并发改名互相覆盖
+            let taken = users
+                .get(new_username)
+                .map_err(ApiError::internal)?
+                .is_some();
+            if taken {
+                return Err(ApiError::conflict("用户名已被占用"));
+            }
+            users.remove(old_username).map_err(ApiError::internal)?;
+        }
+        users
+            .insert(new_username, user_bytes.as_slice())
+            .map_err(ApiError::internal)?;
+
+        if renamed {
+            let mut messages = txn.open_table(MESSAGES).map_err(ApiError::internal)?;
+            let message_updates: Vec<(String, Vec<u8>)> = {
+                let mut out = Vec::new();
+                for entry in messages.iter().map_err(ApiError::internal)? {
+                    let (key, value) = entry.map_err(ApiError::internal)?;
+                    let mut message: Message =
+                        serde_json::from_slice(value.value()).map_err(ApiError::internal)?;
+                    let mut changed = false;
+                    if message.username == old_username {
+                        message.username = new_username.to_string();
+                        changed = true;
+                    }
+                    if let Some(file) = message.file.as_mut() {
+                        if file.uploader == old_username {
+                            file.uploader = new_username.to_string();
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        out.push((
+                            key.value().to_string(),
+                            serde_json::to_vec(&message).map_err(ApiError::internal)?,
+                        ));
+                    }
+                }
+                out
+            };
+            for (key, bytes) in &message_updates {
+                messages
+                    .insert(key.as_str(), bytes.as_slice())
+                    .map_err(ApiError::internal)?;
+            }
+
+            let mut files = txn.open_table(FILES).map_err(ApiError::internal)?;
+            let file_updates: Vec<(String, Vec<u8>)> = {
+                let mut out = Vec::new();
+                for entry in files.iter().map_err(ApiError::internal)? {
+                    let (key, value) = entry.map_err(ApiError::internal)?;
+                    let mut meta: FileMeta =
+                        serde_json::from_slice(value.value()).map_err(ApiError::internal)?;
+                    if meta.uploader == old_username {
+                        meta.uploader = new_username.to_string();
+                        out.push((
+                            key.value().to_string(),
+                            serde_json::to_vec(&meta).map_err(ApiError::internal)?,
+                        ));
+                    }
+                }
+                out
+            };
+            for (key, bytes) in &file_updates {
+                files
+                    .insert(key.as_str(), bytes.as_slice())
+                    .map_err(ApiError::internal)?;
+            }
+        }
+
+        // 变更即吊销该用户全部会话：token 里存的是旧用户名，改名后不能继续沿用
+        let mut tokens = txn.open_table(TOKENS).map_err(ApiError::internal)?;
+        let token_keys: Vec<String> = {
+            let mut out = Vec::new();
+            for entry in tokens.iter().map_err(ApiError::internal)? {
+                let (key, value) = entry.map_err(ApiError::internal)?;
+                let record: TokenRecord =
+                    serde_json::from_slice(value.value()).map_err(ApiError::internal)?;
+                if record.username == old_username {
+                    out.push(key.value().to_string());
+                }
+            }
+            out
+        };
+        for key in &token_keys {
+            tokens.remove(key.as_str()).map_err(ApiError::internal)?;
         }
     }
     txn.commit().map_err(ApiError::internal)

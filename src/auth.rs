@@ -186,14 +186,22 @@ pub fn ensure_admin(db: &redb::Database) -> ApiResult<()> {
 /// 离线设置 / 重置管理密码（passwd 子命令调用）：写哈希 + 吊销全部管理员会话。
 pub fn set_admin_password(db: &redb::Database, password: &str) -> ApiResult<()> {
     validate_password(password)?;
-    db::put_text(
-        db,
-        db::ADMIN,
-        db::ADMIN_PASSWORD_KEY,
-        &hash_password(password)?,
-    )?;
-    db::clear_table(db, db::ADMIN_TOKENS)?;
-    Ok(())
+    db::write_admin_password(db, &hash_password(password)?)
+}
+
+/// 管理面板在线改密：先校验当前管理密码，成功后吊销全部管理员会话（含当前）。
+pub fn change_admin_password(
+    db: &redb::Database,
+    current_password: &str,
+    new_password: &str,
+) -> ApiResult<()> {
+    validate_password(new_password)?;
+    let hash = db::get_text(db, db::ADMIN, db::ADMIN_PASSWORD_KEY)?
+        .ok_or_else(|| ApiError::internal("管理密码尚未初始化"))?;
+    if !verify_password(current_password, &hash) {
+        return Err(ApiError::bad_request("当前管理密码不正确"));
+    }
+    db::write_admin_password(db, &hash_password(new_password)?)
 }
 
 /// 管理面板登录：只校验密码，签发管理员会话 token。

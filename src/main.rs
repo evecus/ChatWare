@@ -34,6 +34,7 @@ fn router(state: AppState) -> Router {
         .route("/api/logout", post(api::auth_api::logout))
         .route("/api/me", get(api::auth_api::me))
         .route("/api/users", get(api::auth_api::list_users))
+        .route("/api/account", post(api::auth_api::update_account))
         // 聊天
         .route("/api/messages", get(api::chat_api::history))
         .route("/api/ws", get(api::chat_api::ws_handler))
@@ -45,6 +46,7 @@ fn router(state: AppState) -> Router {
         .route("/api/admin/login", post(api::admin_api::login))
         .route("/api/admin/logout", post(api::admin_api::logout))
         .route("/api/admin/me", get(api::admin_api::me))
+        .route("/api/admin/password", post(api::admin_api::change_password))
         .route("/api/admin/summary", get(api::admin_api::summary))
         .route(
             "/api/admin/invites",

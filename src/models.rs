@@ -130,3 +130,28 @@ pub struct UserView {
     pub disabled: bool,
     pub created_at: i64,
 }
+
+/// 用户自助修改账号：用户名与密码可在一次请求里同时改。
+/// `new_password` 为空串表示不修改密码；`current_password` 用于验证身份。
+#[derive(Debug, Deserialize)]
+pub struct AccountUpdateReq {
+    pub current_password: String,
+    pub username: String,
+    #[serde(default)]
+    pub new_password: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct AccountUpdateResp {
+    pub ok: bool,
+    pub username: String,
+    /// 账号信息实际变更时会吊销全部会话，前端需重新登录
+    pub relogin: bool,
+}
+
+/// 管理面板在线修改管理密码：必须验证当前密码。
+#[derive(Debug, Deserialize)]
+pub struct AdminPasswordReq {
+    pub current_password: String,
+    pub new_password: String,
+}

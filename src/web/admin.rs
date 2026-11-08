@@ -107,6 +107,17 @@ pub const PAGE: &str = r##"<!DOCTYPE html>
         <h3>只读信息（由启动参数决定，需重启生效）</h3>
         <div id="cfgReadonly" class="mono" style="line-height:2;word-break:break-all"></div>
       </div>
+      <div class="card">
+        <h3>修改管理密码</h3>
+        <div id="pwErr" class="err hidden"></div>
+        <form id="pwForm">
+          <div class="field" style="max-width:320px"><label>当前管理密码</label><input class="input" id="pwCurrent" type="password" autocomplete="current-password" required></div>
+          <div class="field" style="max-width:320px"><label>新管理密码（8~128 个字符）</label><input class="input" id="pwNew" type="password" autocomplete="new-password" required></div>
+          <div class="field" style="max-width:320px"><label>确认新管理密码</label><input class="input" id="pwNew2" type="password" autocomplete="new-password" required></div>
+          <button type="submit" class="btn btn-primary">修改密码</button>
+        </form>
+        <p class="hint" style="text-align:left">修改后所有管理会话立即失效，需用新密码重新登录；不影响任何聊天用户账号。忘记密码时可离线用 ./chatware passwd 设定。</p>
+      </div>
     </div>
 
     <div class="pane hidden" id="pane-conn">
@@ -332,6 +343,22 @@ function bind(){
       toast('设置已保存并生效');
       loadConfig();
     }catch(e){ toast(e.message); }
+  });
+
+  $('#pwForm').addEventListener('submit', async e => {
+    e.preventDefault(); clearErr('#pwErr');
+    const np = $('#pwNew').value;
+    if(np !== $('#pwNew2').value){ showErr('#pwErr', '两次输入的新密码不一致'); return; }
+    try{
+      await api('/api/admin/password', { method: 'POST', body: {
+        current_password: $('#pwCurrent').value, new_password: np
+      }});
+      S.token = '';
+      localStorage.removeItem('cw_admin_token');
+      $('#pwCurrent').value = ''; $('#pwNew').value = ''; $('#pwNew2').value = '';
+      showView('login');
+      toast('管理密码已修改，请用新密码重新登录');
+    }catch(err){ showErr('#pwErr', err.message); }
   });
 
   $('#connCopy').addEventListener('click', () => copyText($('#connUrl').textContent));

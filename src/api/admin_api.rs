@@ -1,8 +1,9 @@
-use crate::auth::{admin_login, now_ms, random_code, AdminAuth};
+use crate::auth::{admin_login, change_admin_password, now_ms, random_code, AdminAuth};
 use crate::db;
 use crate::error::{ApiError, ApiResult};
 use crate::models::{
-    AdminLoginReq, ConfigUpdateReq, CreateInviteReq, InviteRecord, UserRecord, UserView,
+    AdminLoginReq, AdminPasswordReq, ConfigUpdateReq, CreateInviteReq, InviteRecord, UserRecord,
+    UserView,
 };
 use crate::state::AppState;
 use axum::extract::{Path, State};
@@ -40,6 +41,18 @@ pub async fn logout(
 /// 会话有效性校验：前端带 token 探测，有效返回 200。
 pub async fn me(_admin: AdminAuth) -> Json<Value> {
     Json(json!({ "ok": true }))
+}
+
+/// 在线修改管理密码：验证当前密码，成功后吊销全部管理员会话（含当前）。
+/// 与用户账号体系完全无关，不影响任何聊天用户。
+pub async fn change_password(
+    State(state): State<AppState>,
+    _admin: AdminAuth,
+    Json(req): Json<AdminPasswordReq>,
+) -> ApiResult<Json<Value>> {
+    change_admin_password(state.db.as_ref(), &req.current_password, &req.new_password)?;
+    tracing::info!("管理密码已通过面板修改，全部管理员会话已吊销");
+    Ok(Json(json!({ "ok": true })))
 }
 
 pub async fn summary(State(state): State<AppState>, _admin: AdminAuth) -> ApiResult<Json<Value>> {

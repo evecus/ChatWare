@@ -4,7 +4,10 @@ use crate::auth::{
 };
 use crate::db;
 use crate::error::{ApiError, ApiResult};
-use crate::models::{InviteRecord, LoginReq, LoginResp, RegisterReq, UserRecord, UserView};
+use crate::models::{
+    AccountUpdateReq, AccountUpdateResp, InviteRecord, LoginReq, LoginResp, RegisterReq,
+    UserRecord, UserView,
+};
 use crate::state::AppState;
 use axum::extract::State;
 use axum::http::HeaderMap;
@@ -148,4 +151,54 @@ pub async fn list_users(
         .collect();
     views.sort_by(|a, b| a.username.cmp(&b.username));
     Ok(Json(views))
+}
+
+/// 用户自助修改账号：验证当前密码后可改用户名 / 密码。
+/// 改名会在同一写事务里同步重写历史消息与文件署名，并吊销该用户全部会话。
+pub async fn update_account(
+    State(state): State<AppState>,
+    user: AuthUser,
+    Json(req): Json<AccountUpdateReq>,
+) -> ApiResult<Json<AccountUpdateResp>> {
+    let old_username = user.0.username.clone();
+    if !verify_password(&req.current_password, &user.0.password_hash) {
+        return Err(ApiError::bad_request("当前密码不正确"));
+    }
+    let new_username = req.username.trim();
+    validate_username(new_username)?;
+    let renamed = new_username != old_username.as_str();
+    let change_password = !req.new_password.is_empty();
+    if change_password {
+        validate_password(&req.new_password)?;
+    }
+    if !renamed && !change_password {
+        return Ok(Json(AccountUpdateResp {
+            ok: true,
+            username: old_username,
+            relogin: false,
+        }));
+    }
+    let new_hash = if change_password {
+        Some(hash_password(&req.new_password)?)
+    } else {
+        None
+    };
+    db::update_user_account(
+        state.db.as_ref(),
+        &old_username,
+        new_username,
+        new_hash.as_deref(),
+    )?;
+    tracing::info!(
+        old = %old_username,
+        new = %new_username,
+        renamed,
+        change_password,
+        "用户修改账号信息"
+    );
+    Ok(Json(AccountUpdateResp {
+        ok: true,
+        username: new_username.to_string(),
+        relogin: true,
+    }))
 }

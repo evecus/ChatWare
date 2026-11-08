@@ -125,6 +125,33 @@ class ChatViewModel(private val prefs: Prefs) : ViewModel() {
         screen = Screen.Auth
     }
 
+    /** 修改账号（用户名 / 密码）：服务端会吊销全部会话，本地回到登录页并预填新用户名。 */
+    fun updateAccount(current: String, username: String, newPass: String) = viewModelScope.launch {
+        busy = true
+        try {
+            val result = api.updateAccount(current, username, newPass)
+            if (result.relogin) {
+                // 不复用 gotoAuth：它会 clearSession 清掉用户名，
+                // 这里需要在切屏前把新用户名写好，避免依赖重组时机。
+                socket?.cancel()
+                socket = null
+                connected = false
+                everConnected = false
+                messages = emptyList()
+                prefs.clearSession()
+                prefs.username = result.username
+                screen = Screen.Auth
+                toast = "修改成功，请用新的账号信息重新登录"
+            } else {
+                toast = "账号信息未变更"
+            }
+        } catch (e: Exception) {
+            toast = e.message
+        } finally {
+            busy = false
+        }
+    }
+
     private fun start() = viewModelScope.launch {
         try {
             prefs.username = api.me()

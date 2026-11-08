@@ -27,10 +27,13 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -59,6 +62,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -107,6 +111,7 @@ fun ChatScreen(vm: ChatViewModel) {
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
     var input by remember { mutableStateOf("") }
+    var showAccount by remember { mutableStateOf(false) }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
         if (uri != null) {
@@ -156,6 +161,9 @@ fun ChatScreen(vm: ChatViewModel) {
                     }
                 },
                 actions = {
+                    TextButton(onClick = { showAccount = true }) {
+                        Text("账号", fontSize = 12.sp, color = Brand)
+                    }
                     TextButton(onClick = {
                         clipboard.setText(AnnotatedString(vm.serverUrl))
                         Toast.makeText(context, "已复制服务端地址", Toast.LENGTH_SHORT).show()
@@ -211,6 +219,90 @@ fun ChatScreen(vm: ChatViewModel) {
             }
         }
     }
+
+    if (showAccount) {
+        AccountDialog(vm = vm, onDismiss = { showAccount = false })
+    }
+}
+
+/** 账号设置：改用户名 / 密码。成功后服务端吊销会话，本页随 Screen 切换自动退出。 */
+@Composable
+private fun AccountDialog(vm: ChatViewModel, onDismiss: () -> Unit) {
+    var user by remember { mutableStateOf(vm.myName) }
+    var current by remember { mutableStateOf("") }
+    var newPass by remember { mutableStateOf("") }
+    var newPass2 by remember { mutableStateOf("") }
+    val scroll = rememberScrollState()
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("账号设置", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.verticalScroll(scroll)) {
+                Text(
+                    "可修改用户名或密码；保存后需要用新的账号信息重新登录。",
+                    fontSize = 12.sp,
+                    color = Color.Gray
+                )
+                Spacer(Modifier.height(12.dp))
+                OutlinedTextField(
+                    value = user,
+                    onValueChange = { user = it },
+                    label = { Text("用户名") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = current,
+                    onValueChange = { current = it },
+                    label = { Text("当前密码") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = newPass,
+                    onValueChange = { newPass = it },
+                    label = { Text("新密码（留空不改）") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+                Spacer(Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = newPass2,
+                    onValueChange = { newPass2 = it },
+                    label = { Text("确认新密码") },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp)
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    if (newPass != newPass2) {
+                        vm.showToast("两次输入的新密码不一致")
+                    } else {
+                        vm.updateAccount(current, user.trim(), newPass)
+                    }
+                },
+                enabled = !vm.busy,
+                shape = RoundedCornerShape(10.dp),
+                colors = ButtonDefaults.buttonColors(containerColor = Brand)
+            ) { Text("保存") }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text("取消", color = Color.Gray) }
+        }
+    )
 }
 
 @Composable

@@ -38,6 +38,14 @@ button,input,textarea,select{font:inherit}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .row .input{flex:1;min-width:120px}
 
+/* ---------- 账号设置弹窗 ---------- */
+.modal-mask{position:fixed;inset:0;background:rgba(15,20,35,.42);z-index:60;display:grid;place-items:center;padding:20px}
+.modal{width:min(420px,100%);max-height:90dvh;overflow-y:auto;background:#fff;border-radius:20px;box-shadow:0 24px 60px rgba(20,30,60,.22);padding:26px}
+.modal h3{margin:0 0 6px;font-size:17px}
+.modal .modal-sub{color:var(--muted);font-size:12px;margin:0 0 20px}
+.modal-actions{display:flex;gap:10px;margin-top:20px}
+.modal-actions .btn{flex:1}
+
 /* ---------- 登录 / 注册 ---------- */
 .auth-wrap{min-height:100dvh;display:grid;place-items:center;padding:24px;background:radial-gradient(1000px 500px at 15% -10%,#eef0ff,transparent),radial-gradient(900px 500px at 100% 100%,#f3eaff,transparent),#fff}
 .auth-card{width:min(420px,100%);background:#fff;border:1px solid var(--line);border-radius:22px;box-shadow:var(--shadow);padding:32px;animation:rise .35s ease}
