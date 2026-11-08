@@ -121,7 +121,7 @@ systemctl start chatware
 
 ## TLS 与反向代理
 
-本程序不处理证书。Caddy 一行即可（自动支持 WebSocket）：
+本程序不处理证书。Caddy 一行即可（自动支持 WebSocket，并自动设置 `X-Forwarded-For`；防爆破识别依赖该头或 `X-Real-IP`，Caddy 默认行为已足够）：
 
 ```caddyfile
 chat.example.com {
@@ -129,7 +129,7 @@ chat.example.com {
 }
 ```
 
-Nginx 需要显式转发 Upgrade 头，否则 `/api/ws` 无法连接：
+Nginx 需要显式转发 Upgrade 头，否则 `/api/ws` 无法连接。`X-Real-IP` 必须**覆盖式**设置（防爆破按来源 IP 限流，透传客户端自带的值会被伪造绕过）：
 
 ```nginx
 location / {
@@ -138,6 +138,8 @@ location / {
     proxy_set_header Host $host;
     proxy_set_header Upgrade $http_upgrade;
     proxy_set_header Connection "upgrade";
+    proxy_set_header X-Real-IP $remote_addr;        # 覆盖式，防爆破来源识别
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     client_max_body_size 200m;   # 需 >= max_file_size_mb
 }
 ```
@@ -243,7 +245,11 @@ chatware/
 
 ## 安全说明
 
-- 密码 argon2 哈希；token 服务端有状态，登出/禁用/删除账号立即失效；邀请码在同一写事务内核销，不会并发超发。
+- **防爆破限流**：`/api/login`、`/api/admin/login`、`/api/register`（邀请码）、`/api/account`、`/api/admin/password`、`/api/ws`（token 握手）均接入滑动窗口失败计数。同一客户端 IP 在 10 分钟窗口内失败 **10 次**（注册邀请码/WS 鉴权同阈值）即临时锁定，锁定时长从 **1 分钟起逐次翻倍、封顶 15 分钟**，期间即使密码正确也返回 `429`（带 `Retry-After`）。成功登录即清零。
+- **双层来源识别**：主 key 取反代的 `X-Real-IP`（其次 `X-Forwarded-For` 第一段），直连时退回 socket 对端 IP；同时恒以 socket 对端 IP 记一层数（阈值 **100 次/10 分钟**）兜底——直连伪造 XFF 轮换身份也绕不过。反代请务必**覆盖式**设置 `X-Real-IP $remote_addr`，不要透传客户端自带的值。
+- **登录失败随机延迟 100~400ms**，配合 argon2 拉平爆破成本；失败（含管理面板）写入服务端日志（来源 IP）。
+- 所有响应带安全头：`X-Content-Type-Options: nosniff`、`X-Frame-Options: DENY`、`Referrer-Policy: no-referrer`、收紧的 `Content-Security-Policy`（脚本/样式仅限同源）与 `Permissions-Policy`。
+- 密码 argon2 哈希；token 服务端有状态、30 天有效期，登出/禁用/删除账号立即失效；邀请码在同一写事务内核销，不会并发超发。
 - **改密/改名都需验证当前密码**，且账号变更在单个写事务里完成（用户表迁移 + 历史署名重写 + 会话吊销），不会出现半套状态。
 - **没有明文密码文件**：初始管理密码只在启动日志出现一次；`passwd` 子命令与 `/admin` 在线改密都会吊销全部管理员会话。
 - **管理员与用户隔离**：管理密码哈希与会话存在独立表，管理员不属于 `users`，无法登录聊天、收发消息或上传下载文件；`admin` 可被注册为普通用户名。

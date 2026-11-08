@@ -5,19 +5,41 @@ use crate::models::{
     AdminLoginReq, AdminPasswordReq, ConfigUpdateReq, CreateInviteReq, InviteRecord, UserRecord,
     UserView,
 };
+use crate::ratelimit::client_keys;
 use crate::state::AppState;
-use axum::extract::{Path, State};
-use axum::http::HeaderMap;
+use axum::extract::{ConnectInfo, Path, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::Json;
+use rand::Rng;
 use serde_json::{json, Value};
+use std::net::SocketAddr;
+use std::time::Duration;
 
 /// 管理面板登录：只提交密码，通过后签发管理员会话 token。
+/// 失败计入防爆破并带随机延迟；这是最高价值目标，阈值与用户登录相同但单独立表。
 pub async fn login(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Json(req): Json<AdminLoginReq>,
 ) -> ApiResult<Json<Value>> {
-    let token = admin_login(&state, &req.password)?;
-    Ok(Json(json!({ "token": token })))
+    let (primary, peer_ip) = client_keys(&headers, peer);
+    state.limiter.verify("admin-login", &primary, &peer_ip)?;
+    match admin_login(&state, &req.password) {
+        Ok(token) => {
+            state.limiter.succeed("admin-login", &primary, &peer_ip);
+            Ok(Json(json!({ "token": token })))
+        }
+        Err(e) if e.status() == StatusCode::UNAUTHORIZED => {
+            state.limiter.fail("admin-login", &primary, &peer_ip);
+            tracing::warn!(client = %primary, peer = %peer_ip, "管理面板登录失败（计入防爆破）");
+            // 先取值再 await：ThreadRng 不是 Send，不能活过等待点
+            let delay = rand::thread_rng().gen_range(100..400u64);
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            Err(e)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// 登出即删除该管理员会话 token，服务端立即失效。
@@ -44,15 +66,28 @@ pub async fn me(_admin: AdminAuth) -> Json<Value> {
 }
 
 /// 在线修改管理密码：验证当前密码，成功后吊销全部管理员会话（含当前）。
-/// 与用户账号体系完全无关，不影响任何聊天用户。
+/// 当前密码验证失败同样计入防爆破，避免拿到会话后离线穷举管理密码。
 pub async fn change_password(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     _admin: AdminAuth,
     Json(req): Json<AdminPasswordReq>,
 ) -> ApiResult<Json<Value>> {
-    change_admin_password(state.db.as_ref(), &req.current_password, &req.new_password)?;
-    tracing::info!("管理密码已通过面板修改，全部管理员会话已吊销");
-    Ok(Json(json!({ "ok": true })))
+    let (primary, peer_ip) = client_keys(&headers, peer);
+    state.limiter.verify("admin-password", &primary, &peer_ip)?;
+    match change_admin_password(state.db.as_ref(), &req.current_password, &req.new_password) {
+        Ok(()) => {
+            state.limiter.succeed("admin-password", &primary, &peer_ip);
+            tracing::info!("管理密码已通过面板修改，全部管理员会话已吊销");
+            Ok(Json(json!({ "ok": true })))
+        }
+        Err(e) if e.status() == StatusCode::BAD_REQUEST => {
+            state.limiter.fail("admin-password", &primary, &peer_ip);
+            Err(e)
+        }
+        Err(e) => Err(e),
+    }
 }
 
 pub async fn summary(State(state): State<AppState>, _admin: AdminAuth) -> ApiResult<Json<Value>> {

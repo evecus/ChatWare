@@ -2,6 +2,7 @@ use crate::config::Config;
 use crate::db;
 use crate::error::{ApiError, ApiResult};
 use crate::models::ConfigUpdateReq;
+use crate::ratelimit::{RateLimiter, SharedRateLimiter};
 use redb::Database;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -14,6 +15,8 @@ pub struct AppState {
     /// 单一公共大厅的广播通道
     pub hub: broadcast::Sender<String>,
     pub files_dir: Arc<PathBuf>,
+    /// 登录 / 注册 / WS 鉴权防爆破限流（内存态，重启清零）
+    pub limiter: SharedRateLimiter,
     pub started_at: i64,
 }
 
@@ -37,6 +40,7 @@ impl AppState {
             config: Arc::new(RwLock::new(config)),
             hub,
             files_dir: Arc::new(files_dir),
+            limiter: Arc::new(RateLimiter::default()),
             started_at: crate::auth::now_ms(),
         }
     }

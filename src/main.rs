@@ -4,19 +4,50 @@ mod config;
 mod db;
 mod error;
 mod models;
+mod ratelimit;
 mod state;
 mod web;
 
-use axum::extract::DefaultBodyLimit;
+use axum::extract::{DefaultBodyLimit, Request};
+use axum::http::HeaderValue;
+use axum::middleware::{self, Next};
+use axum::response::Response;
 use axum::routing::{delete, get, post};
 use axum::Router;
 use clap::Parser;
 use config::{Cli, Command, Config};
 use state::AppState;
+use std::net::SocketAddr;
 
 /// 传输层硬上限，与运行期可配的 max_file_size_mb 解耦：
 /// 管理面板把上限调大后无需重启即可生效，真实限制在 upload handler 内按配置检查。
 const HARD_BODY_LIMIT: usize = 1100 * 1024 * 1024;
+
+/// 全局安全响应头。脚本与样式均为外部文件（.rs 面板内联的 style 属性需要
+/// style-src 'unsafe-inline'），页面不含内联脚本，CSP 收紧到 'self'。
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    let set = |headers: &mut axum::http::HeaderMap, k: &'static str, v: &'static str| {
+        headers.insert(k, HeaderValue::from_static(v));
+    };
+    set(headers, "x-content-type-options", "nosniff");
+    set(headers, "x-frame-options", "DENY");
+    set(headers, "referrer-policy", "no-referrer");
+    set(
+        headers,
+        "content-security-policy",
+        "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+         img-src 'self' data:; connect-src 'self'; font-src 'self'; base-uri 'none'; \
+         frame-ancestors 'none'; form-action 'self'",
+    );
+    set(
+        headers,
+        "permissions-policy",
+        "camera=(), microphone=(), geolocation=()",
+    );
+    res
+}
 
 fn router(state: AppState) -> Router {
     Router::new()
@@ -78,6 +109,7 @@ fn router(state: AppState) -> Router {
             get(api::admin_api::connection_info),
         )
         .layer(DefaultBodyLimit::max(HARD_BODY_LIMIT))
+        .layer(middleware::from_fn(security_headers))
         .with_state(state)
 }
 
@@ -125,12 +157,15 @@ async fn main() {
     tracing::info!("根路径 / 为空响应，客户端请直接把对外地址作为服务端地址");
     tracing::info!("本程序只监听 HTTP，TLS 域名证书请由反向代理提供");
 
-    axum::serve(listener, router(state))
-        .await
-        .unwrap_or_else(|e| {
-            eprintln!("[chatware] 服务运行错误: {e}");
-            std::process::exit(1);
-        });
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap_or_else(|e| {
+        eprintln!("[chatware] 服务运行错误: {e}");
+        std::process::exit(1);
+    });
 }
 
 /// 创建数据目录、打开（或新建）数据库并初始化全部表。服务启动与 passwd 子命令共用。

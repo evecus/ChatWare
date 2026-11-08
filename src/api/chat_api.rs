@@ -2,13 +2,16 @@ use crate::auth::{now_ms, user_by_token, AuthUser};
 use crate::db;
 use crate::error::{ApiError, ApiResult};
 use crate::models::{ClientMessage, FileMeta, Message as ChatMessage, MessageQuery, WsQuery};
+use crate::ratelimit::client_keys;
 use crate::state::AppState;
 use axum::extract::ws::{Message as WsMessage, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, State};
+use axum::extract::{ConnectInfo, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
+use std::net::SocketAddr;
 use std::time::Duration;
 use tokio::time::{interval, MissedTickBehavior};
 use uuid::Uuid;
@@ -26,12 +29,26 @@ pub async fn history(
 }
 
 /// 浏览器 WebSocket 无法自定义 header，token 通过 query 传递。
+/// 无效 token 的握手计入防爆破，防止 ws?token= 被穷举。
 pub async fn ws_handler(
     State(state): State<AppState>,
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    headers: HeaderMap,
     Query(query): Query<WsQuery>,
     ws: WebSocketUpgrade,
 ) -> ApiResult<Response> {
-    let user = user_by_token(&state, &query.token)?;
+    let (primary, peer_ip) = client_keys(&headers, peer);
+    state.limiter.verify("ws-auth", &primary, &peer_ip)?;
+    let user = match user_by_token(&state, &query.token) {
+        Ok(u) => u,
+        Err(e) => {
+            if e.status() == StatusCode::UNAUTHORIZED {
+                state.limiter.fail("ws-auth", &primary, &peer_ip);
+            }
+            return Err(e);
+        }
+    };
+    state.limiter.succeed("ws-auth", &primary, &peer_ip);
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, state, user)))
 }
 
